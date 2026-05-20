@@ -35,7 +35,7 @@ COPY --from=builder /app/dist ./dist
 ENV NODE_ENV=production
 
 # Expose port
-EXPOSE 3000
+EXPOSE 4000
 
 # Determine which command to run based on BUILD_TARGET env variable
 # Default is API, can be set to WORKER for background job processing
