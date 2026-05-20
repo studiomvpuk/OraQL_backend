@@ -1,0 +1,339 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+}
+
+enum UserRole {
+  USER
+  PREMIUM
+  ADMIN
+}
+
+enum Sport {
+  FOOTBALL
+  BASKETBALL
+  TENNIS
+  CRICKET
+  BASEBALL
+  HOCKEY
+}
+
+enum EventStatus {
+  SCHEDULED
+  LINEUP_CONFIRMED
+  LIVE
+  HALF_TIME
+  FINISHED
+  POSTPONED
+  CANCELLED
+  SUSPENDED
+}
+
+enum MarketCategory {
+  MATCH_RESULT
+  GOALS
+  CORNERS
+  CARDS
+  PLAYER
+  HALFTIME
+  HANDICAP
+  SPECIAL
+}
+
+enum IngestJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String?
+  firstName        String?
+  lastName         String?
+  avatarUrl        String?
+  authProvider     AuthProvider @default(LOCAL)
+  googleId         String?  @unique
+  role             UserRole @default(USER)
+  preferredSports  Sport[]
+  timezone         String   @default("UTC")
+  refreshToken     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  activityLogs     UserActivityLog[]
+  builderSelections BuilderSelection[]
+}
+
+model UserActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model League {
+  id        String   @id @default(cuid())
+  externalId String  @unique
+  name      String
+  country   String?
+  logoUrl   String?
+  sport     Sport
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events    Event[]
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  externalId String  @unique
+  name      String
+  shortName String?
+  logoUrl   String?
+  sport     Sport
+  leagueId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  league    League?  @relation(fields: [leagueId], references: [id], onDelete: SetNull)
+  homeEvents Event[]  @relation("HomeTeam")
+  awayEvents Event[]  @relation("AwayTeam")
+  players   Player[]
+  matchStats MatchStats[]
+}
+
+model Player {
+  id        String   @id @default(cuid())
+  externalId String  @unique
+  name      String
+  position  String?
+  number    Int?
+  photoUrl  String?
+  teamId    String
+  dateOfBirth DateTime?
+  nationality String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  injuries  PlayerInjury[]
+  lineupEntries LineupEntry[]
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  externalId String  @unique
+  leagueId  String
+  homeTeamId String
+  awayTeamId String
+  sport     Sport
+  status    EventStatus @default(SCHEDULED)
+  kickoffAt DateTime
+  venue     String?
+  round     String?
+  season    String?
+  homeScore Int?
+  awayScore Int?
+  dataPayload Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  homeTeam  Team     @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeam  Team     @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  markets   Market[]
+  picks     Pick[]
+  lineups   Lineup[]
+  matchStats MatchStats[]
+  bookmakerOdds BookmakerOdds[]
+
+  @@index([kickoffAt])
+  @@index([sport, status])
+  @@index([leagueId])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+}
+
+model MatchStats {
+  id        String   @id @default(cuid())
+  eventId   String
+  teamId    String
+  goals     Int      @default(0)
+  shotsTotal Int?
+  shotsOnTarget Int?
+  possession Float?
+  corners   Int      @default(0)
+  yellowCards Int    @default(0)
+  redCards  Int      @default(0)
+  fouls     Int?
+  offsides  Int?
+  isWeighted Boolean @default(false)
+  weightFactor Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, teamId])
+}
+
+model Lineup {
+  id        String   @id @default(cuid())
+  eventId   String
+  teamId    String
+  formation String?
+  isConfirmed Boolean @default(false)
+  confirmedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  entries   LineupEntry[]
+
+  @@unique([eventId, teamId])
+}
+
+model LineupEntry {
+  id        String   @id @default(cuid())
+  lineupId  String
+  playerId  String
+  isStarter Boolean  @default(true)
+  position  String?
+  shirtNumber Int?
+  createdAt DateTime @default(now())
+
+  lineup    Lineup   @relation(fields: [lineupId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+model PlayerInjury {
+  id        String   @id @default(cuid())
+  playerId  String
+  type      String
+  severity  String?
+  description String?
+  startDate DateTime
+  expectedReturn DateTime?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+model Market {
+  id        String   @id @default(cuid())
+  eventId   String
+  category  MarketCategory
+  name      String
+  shortName String?
+  line      Float?
+  probability Float
+  confidence Float
+  impliedProbability Float?
+  valueGap Float?
+  isValueBet Boolean @default(false)
+  explanation String? @db.Text
+  explanationFactors Json?
+  probabilityUpdatedAt DateTime?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  picks     Pick[]
+  builderSelections BuilderSelection[]
+
+  @@index([eventId, category])
+}
+
+model Pick {
+  id        String   @id @default(cuid())
+  eventId   String
+  marketId  String
+  rank      Int
+  probability Float
+  confidence Float
+  explanation String? @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, rank])
+}
+
+model BookmakerOdds {
+  id        String   @id @default(cuid())
+  eventId   String
+  bookmaker String
+  marketName String
+  line      Float?
+  odds      Float
+  impliedProbability Float?
+  lastUpdatedAt DateTime
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, bookmaker])
+}
+
+model BuilderSelection {
+  id        String   @id @default(cuid())
+  userId    String
+  marketId  String
+  addedProbability Float?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId])
+}
+
+model IngestJob {
+  id        String   @id @default(cuid())
+  type      String
+  status    IngestJobStatus @default(PENDING)
+  startedAt DateTime?
+  completedAt DateTime?
+  error     String?
+  metadata  Json?
+  eventsProcessed Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

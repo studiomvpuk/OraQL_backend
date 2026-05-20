@@ -1,0 +1,192 @@
+ORACLE API - NESTJS MODULES CREATED
+====================================
+
+Total Files Created: 17
+Total Lines of Code: 1210
+Date: 2026-04-09
+
+=== EVENTS MODULE (4 files, 390 lines) ===
+Location: src/modules/events/
+
+1. events.module.ts (13 lines)
+   - Imports PrismaModule
+   - Provides EventsService, EventsGateway
+   - Exports EventsService
+
+2. events.service.ts (244 lines)
+   - findByDate(filters): Paginated events with sport/leagueId/date filtering
+     Returns: {data, meta: {total, page, limit, totalPages, hasNext, hasPrev}}
+   - findById(id): Full event with markets, picks, lineups, matchStats
+   - findUpcoming(sport?, limit=10): Next 24h events
+   - findLive(sport?): LIVE/HALF_TIME events
+   - getSportSummary(date?): GroupBy sport with counts
+   - getLeaguesForDate(sport, date?): Distinct leagues with event counts
+
+3. events.controller.ts (58 lines)
+   - GET /events (query: sport, leagueId, date, page, limit)
+   - GET /events/sports-summary (query: date)
+   - GET /events/leagues (query: sport, date)
+   - GET /events/upcoming (query: sport, limit)
+   - GET /events/live (query: sport)
+   - GET /events/:id
+
+4. events.gateway.ts (75 lines)
+   - WebSocket gateway on namespace '/events'
+   - @SubscribeMessage('join_event'): Subscribe to event room
+   - @SubscribeMessage('leave_event'): Leave event room
+   - broadcastPicksUpdate(eventId, picks): Broadcast picks updates
+   - broadcastEventStatus(eventId, status, scores): Broadcast status updates
+
+=== MARKETS MODULE (3 files, 191 lines) ===
+Location: src/modules/markets/
+
+1. markets.module.ts (12 lines)
+   - Imports PrismaModule
+   - Provides MarketsService
+   - Exports MarketsService
+
+2. markets.service.ts (151 lines)
+   - VALUE_BET_THRESHOLD: 0.1 (10%)
+   - findByEvent(eventId, category?): Markets for event, ordered by category+probability
+   - findById(id): Single market with event and picks
+   - findValueBets(date?, sport?): Markets with isValueBet=true
+   - upsertMany(eventId, markets[]): Bulk upsert markets
+   - updateValueBetFlags(eventId): Compare oracle vs implied probability with 10% threshold
+
+3. markets.controller.ts (28 lines)
+   - GET /markets/event/:eventId (query: category)
+   - GET /markets/value-bets (query: date, sport)
+   - GET /markets/:id
+
+=== PICKS MODULE (3 files, 155 lines) ===
+Location: src/modules/picks/
+
+1. picks.module.ts (12 lines)
+   - Imports PrismaModule
+   - Provides PicksService
+   - Exports PicksService
+
+2. picks.service.ts (118 lines)
+   - MIN_PROBABILITY: 0.55
+   - MAX_PICKS_PER_EVENT: 5
+   - findByEvent(eventId): Active picks for event, ordered by rank
+   - findTopPicks(filters: {sport?, minProbability?, limit=20}): Top picks across events
+   - generateForEvent(eventId): Creates ranked picks from top markets
+     1. Deactivates old picks
+     2. Gets top markets above MIN_PROBABILITY
+     3. Creates ranked picks with oracle probability as rank
+
+3. picks.controller.ts (25 lines)
+   - GET /picks/event/:eventId
+   - GET /picks/top (query: sport, minProbability, limit)
+
+=== BUILDER MODULE (3 files, 245 lines) ===
+Location: src/modules/builder/
+
+1. builder.module.ts (12 lines)
+   - Imports PrismaModule
+   - Provides BuilderService
+   - Exports BuilderService
+
+2. builder.service.ts (166 lines)
+   - getSelections(userId): Returns selections with combined probability/odds
+   - addSelection(userId, marketId, selectedOutcome): Add to betslip
+     - Validates market exists
+     - Prevents Over/Under conflicts for same event
+   - removeSelection(userId, selectionId): Remove from betslip
+   - clearSelections(userId): Clear all selections
+   - exportSelections(userId): Formatted text export of betslip
+
+3. builder.controller.ts (67 lines)
+   - GET /builder: Get user selections
+   - POST /builder/add/:marketId: Add selection
+   - DELETE /builder/remove/:selectionId: Remove selection
+   - DELETE /builder/clear: Clear all
+   - GET /builder/export: Export as text
+
+=== HEALTH MODULE (2 files, 48 lines) ===
+Location: src/modules/health/
+
+1. health.module.ts (9 lines)
+   - Imports PrismaModule
+   - Provides HealthController
+
+2. health.controller.ts (39 lines)
+   - @Public() GET /health
+   - Returns {status, database: ok/error, timestamp, uptime}
+   - Checks database connectivity
+   - Tracks application uptime
+
+=== STORAGE MODULE (2 files, 181 lines) ===
+Location: src/modules/storage/
+
+1. storage.module.ts (8 lines)
+   - Provides StorageService
+   - Exports StorageService
+
+2. storage.service.ts (173 lines)
+   - Uses S3Client for Cloudflare R2
+   - Validates required environment variables
+   - upload(key, body, contentType): Upload file to R2
+   - download(key): Download file from R2
+   - delete(key): Delete file from R2
+   - getSignedUrl(key, expiresIn=3600): Generate signed URL (1-7 days)
+   - All methods include error handling and logging
+
+=== KEY FEATURES ===
+
+1. PAGINATION SUPPORT
+   - Events module implements full pagination with meta information
+   - Supports page/limit with hasNext/hasPrev flags
+
+2. WEBSOCKET REALTIME UPDATES
+   - Events gateway enables real-time picks and status updates
+   - Room-based subscriptions per event
+
+3. VALUE BET DETECTION
+   - Markets module compares oracle probability vs implied probability
+   - 10% threshold for value bet identification
+
+4. CONFLICT DETECTION
+   - Builder prevents adding conflicting Over/Under selections
+   - Validates per-event selections
+
+5. CLOUDFLARE R2 INTEGRATION
+   - Full S3 API compatibility
+   - Signed URL generation with configurable expiration
+   - Error handling with detailed logging
+
+6. SECURITY
+   - Health endpoint marked @Public()
+   - Other endpoints require authentication (by default)
+   - User context via request.user in builder
+
+=== ENVIRONMENT VARIABLES REQUIRED ===
+
+For Storage Module (Cloudflare R2):
+- CLOUDFLARE_R2_BUCKET: Bucket name
+- CLOUDFLARE_R2_ACCESS_KEY_ID: API access key
+- CLOUDFLARE_R2_SECRET_ACCESS_KEY: API secret key
+- CLOUDFLARE_R2_ENDPOINT: R2 endpoint URL
+- CLOUDFLARE_R2_REGION: Region (default: auto)
+
+For Events Gateway (WebSocket):
+- CORS_ORIGIN: CORS origin (default: *)
+
+=== DEPENDENCIES ASSUMED ===
+
+- @nestjs/common
+- @nestjs/websockets
+- @aws-sdk/client-s3
+- @aws-sdk/s3-request-presigner
+- @prisma/client
+- socket.io
+
+=== NOTES ===
+
+- All services are production-ready with error handling
+- Services use Prisma ORM for database operations
+- Controllers parse query/path parameters with type safety
+- WebSocket gateway uses connection/disconnection lifecycle hooks
+- Storage service validates all input parameters
+- Pagination calculations are consistent across modules

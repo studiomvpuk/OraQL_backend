@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+README.md
+.eslintrc.js
+.prettierrc
+coverage
+.vscode
+.idea
+*.log
