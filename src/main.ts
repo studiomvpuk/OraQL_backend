@@ -44,8 +44,8 @@ async function bootstrap() {
 
   // Swagger API documentation
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Oracle API')
-    .setDescription('Oracle API - Market data, predictions, and portfolio builder')
+    .setTitle('OraQL_ API')
+    .setDescription('OraQL_ API - Market data, predictions, and portfolio builder')
     .setVersion('1.0')
     .addBearerAuth(
       {
@@ -62,7 +62,7 @@ async function bootstrap() {
   SwaggerModule.setup('api/v1/docs', app, document);
 
   // Start server
-  const port = configService.get<number>('PORT', 3000);
+  const port = configService.get<number>('PORT', 4000);
   await app.listen(port);
 
   logger.log(`API running on port ${port}`);

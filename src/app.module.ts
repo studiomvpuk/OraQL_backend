@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bull';
@@ -10,7 +10,7 @@ import { redisConfig } from './config/redis.config';
 import { jwtConfig } from './config/jwt.config';
 import { googleConfig } from './config/google.config';
 import { r2Config } from './config/r2.config';
-import { dataProviderConfig } from './config/data-provider.config';
+import { dataProviderConfig } from './config/data-providers.config';
 import { throttleConfig } from './config/throttle.config';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -33,10 +33,12 @@ import { HealthModule } from './modules/health/health.module';
         NODE_ENV: Joi.string()
           .valid('development', 'production', 'test')
           .default('development'),
-        PORT: Joi.number().default(3000),
+        PORT: Joi.number().default(4000),
         CORS_ORIGINS: Joi.string().default('http://localhost:3000'),
+        REDIS_HOST: Joi.string().default('localhost'),
+        REDIS_PORT: Joi.number().default(6379),
         DATABASE_URL: Joi.string().required(),
-        REDIS_URL: Joi.string().required(),
+        REDIS_URL: Joi.string().optional(),
         JWT_SECRET: Joi.string().required(),
         JWT_EXPIRATION: Joi.string().default('24h'),
         GOOGLE_CLIENT_ID: Joi.string(),
@@ -62,15 +64,11 @@ import { HealthModule } from './modules/health/health.module';
 
     // Rate limiting
     ThrottlerModule.forRootAsync({
-      useFactory: (configService: any) => {
-        const ttl = configService.get<number>('throttle.ttl', 60000);
-        const limit = configService.get<number>('throttle.limit', 10);
-        return {
-          ttl,
-          limit,
-        };
-      },
-      inject: ['ConfigService'],
+      useFactory: (configService: ConfigService) => ({
+        ttl: configService.get<number>('throttle.ttl', 60000),
+        limit: configService.get<number>('throttle.limit', 10),
+      }),
+      inject: [ConfigService],
     }),
 
     // Scheduling
@@ -78,22 +76,19 @@ import { HealthModule } from './modules/health/health.module';
 
     // Job queue
     BullModule.forRootAsync({
-      useFactory: (configService: any) => {
-        const redisUrl = configService.get<string>('redis.url');
-        return {
-          redis: redisUrl,
-          defaultJobOptions: {
-            removeOnComplete: true,
-            removeOnFail: false,
-            attempts: 3,
-            backoff: {
-              type: 'exponential',
-              delay: 2000,
-            },
+      useFactory: (configService: ConfigService) => ({
+        redis: configService.get<string>('redis.url'),
+        defaultJobOptions: {
+          removeOnComplete: true,
+          removeOnFail: false,
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
           },
-        };
-      },
-      inject: ['ConfigService'],
+        },
+      }),
+      inject: [ConfigService],
     }),
 
     // Core modules

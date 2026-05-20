@@ -1,6 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
-export default registerAs('dataProviders', () => ({
+export const dataProviderConfig = registerAs('dataProviders', () => ({
   apiFootball: {
     key: process.env.API_FOOTBALL_KEY,
     baseUrl: process.env.API_FOOTBALL_BASE_URL || 'https://api-football-v1.p.rapidapi.com',
