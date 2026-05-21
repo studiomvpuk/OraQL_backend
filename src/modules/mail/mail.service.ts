@@ -5,12 +5,17 @@ import { Resend } from 'resend';
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly resend: Resend;
+  private readonly resend: Resend | null = null;
   private readonly fromAddress: string;
   private readonly frontendUrl: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.resend = new Resend(this.configService.get<string>('RESEND_API_KEY'));
+    const apiKey = this.configService.get<string>('RESEND_API_KEY');
+    if (apiKey) {
+      this.resend = new Resend(apiKey);
+    } else {
+      this.logger.warn('RESEND_API_KEY not set — email sending will be unavailable');
+    }
     this.fromAddress = this.configService.get<string>(
       'RESEND_FROM_ADDRESS',
       'OraQL_ <noreply@oraql.com>',
@@ -24,6 +29,10 @@ export class MailService {
   // ─── Email Verification ─────────────────────────────────────────────────
 
   async sendVerificationEmail(email: string, token: string): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Skipping verification email to ${email} — Resend not configured`);
+      return;
+    }
     const verifyUrl = `${this.frontendUrl}/auth/verify-email?token=${token}`;
 
     try {
@@ -43,6 +52,10 @@ export class MailService {
   // ─── Password Reset ─────────────────────────────────────────────────────
 
   async sendPasswordResetEmail(email: string, token: string): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Skipping password reset email to ${email} — Resend not configured`);
+      return;
+    }
     const resetUrl = `${this.frontendUrl}/auth/reset-password?token=${token}`;
 
     try {
