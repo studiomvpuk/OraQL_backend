@@ -2,7 +2,6 @@
 node_modules/
 npm-debug.log
 yarn-error.log
-package-lock.json
 yarn.lock
 
 # Environment
@@ -50,7 +49,7 @@ Thumbs.db
 dump.rdb
 
 # Prisma
-prisma/migrations/
+# Note: prisma/migrations/ must be tracked for prisma migrate deploy
 
 # Bull queue data
 bull-cache/
