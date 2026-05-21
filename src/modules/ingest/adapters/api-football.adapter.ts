@@ -34,7 +34,13 @@ export class ApiFootballAdapter implements IDataProvider {
   constructor(private configService: ConfigService) {
     this.apiKey = this.configService.get<string>('API_FOOTBALL_KEY') || '';
     if (!this.apiKey) {
-      throw new Error('API_FOOTBALL_KEY not configured');
+      this.logger.warn('API_FOOTBALL_KEY not configured — data ingestion will be unavailable');
+    }
+  }
+
+  private ensureConfigured(): void {
+    if (!this.apiKey) {
+      throw new Error('API_FOOTBALL_KEY not configured. Set it in environment variables.');
     }
   }
 
@@ -66,6 +72,7 @@ export class ApiFootballAdapter implements IDataProvider {
     endpoint: string,
     params: Record<string, any> = {},
   ): Promise<T[]> {
+    this.ensureConfigured();
     await this.ensureRateLimit();
 
     const url = new URL(`${this.baseUrl}/${endpoint}`);

@@ -33,11 +33,18 @@ export class OddsApiAdapter implements Partial<IDataProvider> {
   constructor(private configService: ConfigService) {
     this.apiKey = this.configService.get<string>('ODDS_API_KEY') || '';
     if (!this.apiKey) {
-      throw new Error('ODDS_API_KEY not configured');
+      this.logger.warn('ODDS_API_KEY not configured — odds fetching will be unavailable');
+    }
+  }
+
+  private ensureConfigured(): void {
+    if (!this.apiKey) {
+      throw new Error('ODDS_API_KEY not configured. Set it in environment variables.');
     }
   }
 
   async getOdds(fixtureExternalId: string): Promise<OddsData[]> {
+    this.ensureConfigured();
     const url = new URL(`${this.baseUrl}/sports/soccer_epl/events/${fixtureExternalId}/odds`);
     url.searchParams.append('apiKey', this.apiKey);
     url.searchParams.append('regions', 'uk');
