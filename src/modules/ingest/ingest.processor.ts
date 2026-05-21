@@ -26,8 +26,7 @@ export class IngestProcessor {
   async processOddsRefresh(job: Job): Promise<void> {
     this.logger.log('Processing odds refresh for active events');
     try {
-      // Implementation would fetch active events and refresh their odds
-      // For now, this is a placeholder that would integrate with EventService
+      await this.ingestService.refreshOddsForActiveEvents();
       this.logger.log('Odds refresh completed');
     } catch (error) {
       this.logger.error('Odds refresh failed', error);
@@ -39,8 +38,7 @@ export class IngestProcessor {
   async processLineupCheck(job: Job): Promise<void> {
     this.logger.log('Processing lineup checks for upcoming events');
     try {
-      // Implementation would check events kicking off within 90 minutes
-      // and poll for confirmed lineups
+      await this.ingestService.checkLineupsForUpcomingEvents();
       this.logger.log('Lineup check completed');
     } catch (error) {
       this.logger.error('Lineup check failed', error);

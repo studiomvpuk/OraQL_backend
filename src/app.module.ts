@@ -22,6 +22,7 @@ import { IngestModule } from './modules/ingest/ingest.module';
 import { ProbabilityModule } from './modules/probability/probability.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { HealthModule } from './modules/health/health.module';
+import { MailModule } from './modules/mail/mail.module';
 
 @Module({
   imports: [
@@ -47,6 +48,9 @@ import { HealthModule } from './modules/health/health.module';
         R2_ACCESS_KEY_ID: Joi.string(),
         R2_SECRET_ACCESS_KEY: Joi.string(),
         R2_BUCKET_NAME: Joi.string(),
+        RESEND_API_KEY: Joi.string().optional(),
+        RESEND_FROM_ADDRESS: Joi.string().default('OraQL_ <noreply@oraql.com>'),
+        FRONTEND_URL: Joi.string().default('http://localhost:3000'),
         THROTTLE_TTL: Joi.number().default(60000),
         THROTTLE_LIMIT: Joi.number().default(10),
       }),
@@ -92,6 +96,7 @@ import { HealthModule } from './modules/health/health.module';
     }),
 
     // Core modules
+    MailModule,
     PrismaModule,
     AuthModule,
     EventsModule,

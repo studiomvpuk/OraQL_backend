@@ -80,6 +80,20 @@ model User {
   preferredSports  Sport[]
   timezone         String   @default("UTC")
   refreshToken     String?
+
+  // Email verification
+  emailVerified    Boolean  @default(false)
+  emailVerifyToken String?  @unique
+  emailVerifyExpiry DateTime?
+
+  // Password reset
+  passwordResetToken  String?  @unique
+  passwordResetExpiry DateTime?
+
+  // 2FA / TOTP
+  twoFactorEnabled Boolean  @default(false)
+  twoFactorSecret  String?
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -111,6 +125,7 @@ model League {
   updatedAt DateTime @updatedAt
 
   events    Event[]
+  teams     Team[]
 }
 
 model Team {
@@ -129,6 +144,7 @@ model Team {
   awayEvents Event[]  @relation("AwayTeam")
   players   Player[]
   matchStats MatchStats[]
+  lineups   Lineup[]
 }
 
 model Player {
@@ -309,6 +325,7 @@ model BookmakerOdds {
 
   event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
+  @@unique([eventId, bookmaker, marketName, line])
   @@index([eventId, bookmaker])
 }
 
@@ -328,10 +345,14 @@ model BuilderSelection {
 model IngestJob {
   id        String   @id @default(cuid())
   type      String
+  jobType   String?
+  externalId String?
   status    IngestJobStatus @default(PENDING)
   startedAt DateTime?
   completedAt DateTime?
+  processedAt DateTime?
   error     String?
+  errorMessage String?
   metadata  Json?
   eventsProcessed Int @default(0)
   createdAt DateTime @default(now())
