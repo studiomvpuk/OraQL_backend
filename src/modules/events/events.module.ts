@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from '../../prisma/prisma.module';
+import { PrismaModule } from '../prisma/prisma.module';
 import { EventsService } from './events.service';
 import { EventsController } from './events.controller';
 import { EventsGateway } from './events.gateway';

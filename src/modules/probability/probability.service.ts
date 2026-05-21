@@ -1,5 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { ExplanationService } from './explanation.service';
 
 interface TeamStats {
@@ -70,10 +70,10 @@ export class ProbabilityService {
       });
 
       const homeInjuries = injuries.filter(
-        (i) => i.player.teamId === event.homeTeamId,
+        (i: any) => i.player.teamId === event.homeTeamId,
       );
       const awayInjuries = injuries.filter(
-        (i) => i.player.teamId === event.awayTeamId,
+        (i: any) => i.player.teamId === event.awayTeamId,
       );
 
       const homeInjuryFactor = this.computeInjuryAdjustment(homeInjuries);
@@ -422,7 +422,7 @@ export class ProbabilityService {
     for (const event of events) {
       const isHome = event.homeTeamId === teamId;
       const teamStats = event.stats.find(
-        (s) => s.teamId === teamId,
+        (s: any) => s.teamId === teamId,
       );
 
       if (!teamStats) continue;

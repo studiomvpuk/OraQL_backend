@@ -76,7 +76,7 @@ export class StorageService {
       };
     } catch (error) {
       this.logger.error(`Failed to upload file to R2: ${key}`, error);
-      throw new BadRequestException(`Failed to upload file: ${error.message}`);
+      throw new BadRequestException(`Failed to upload file: ${(error as Error).message}`);
     }
   }
 
@@ -103,7 +103,7 @@ export class StorageService {
       };
     } catch (error) {
       this.logger.error(`Failed to download file from R2: ${key}`, error);
-      throw new BadRequestException(`Failed to download file: ${error.message}`);
+      throw new BadRequestException(`Failed to download file: ${(error as Error).message}`);
     }
   }
 
@@ -127,7 +127,7 @@ export class StorageService {
       };
     } catch (error) {
       this.logger.error(`Failed to delete file from R2: ${key}`, error);
-      throw new BadRequestException(`Failed to delete file: ${error.message}`);
+      throw new BadRequestException(`Failed to delete file: ${(error as Error).message}`);
     }
   }
 
@@ -166,7 +166,7 @@ export class StorageService {
         error,
       );
       throw new BadRequestException(
-        `Failed to generate signed URL: ${error.message}`,
+        `Failed to generate signed URL: ${(error as Error).message}`,
       );
     }
   }

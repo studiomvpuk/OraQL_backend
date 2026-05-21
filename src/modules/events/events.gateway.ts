@@ -6,10 +6,9 @@ import {
   OnGatewayDisconnect,
   MessageBody,
   ConnectedSocket,
-  Namespace,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
-import { Socket } from 'socket.io';
+import { Socket, Namespace } from 'socket.io';
 
 @WebSocketGateway({
   namespace: '/events',

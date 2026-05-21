@@ -68,10 +68,10 @@ import { MailModule } from './modules/mail/mail.module';
 
     // Rate limiting
     ThrottlerModule.forRootAsync({
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ([{
         ttl: configService.get<number>('throttle.ttl', 60000),
         limit: configService.get<number>('throttle.limit', 10),
-      }),
+      }]),
       inject: [ConfigService],
     }),
 

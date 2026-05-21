@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 interface SelectionItem {
   id: string;
@@ -12,7 +12,7 @@ interface SelectionItem {
   selectedOutcome: string;
 }
 
-interface SelectionsResponse {
+export interface SelectionsResponse {
   selections: SelectionItem[];
   combinedProbability: number;
   combinedOdds: number;
@@ -44,7 +44,7 @@ export class BuilderService {
       },
     });
 
-    const formattedSelections = selections.map((sel) => ({
+    const formattedSelections = selections.map((sel: any) => ({
       id: sel.id,
       marketId: sel.marketId,
       marketName: sel.market.name,
@@ -55,8 +55,8 @@ export class BuilderService {
       selectedOutcome: sel.selectedOutcome,
     }));
 
-    const probabilities = formattedSelections.map((s) => s.probability);
-    const odds = formattedSelections.map((s) => s.odds);
+    const probabilities = formattedSelections.map((s: SelectionItem) => s.probability);
+    const odds = formattedSelections.map((s: SelectionItem) => s.odds);
 
     return {
       selections: formattedSelections,
@@ -90,7 +90,7 @@ export class BuilderService {
     });
 
     const sameEventSelections = existingSelections.filter(
-      (sel) => sel.market.eventId === market.eventId,
+      (sel: any) => sel.market.eventId === market.eventId,
     );
 
     for (const sel of sameEventSelections) {

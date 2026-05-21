@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
-interface FindByDateFilters {
+export interface FindByDateFilters {
   sport?: string;
   leagueId?: string;
   date?: string;
@@ -10,7 +9,7 @@ interface FindByDateFilters {
   limit?: number;
 }
 
-interface PaginationMeta {
+export interface PaginationMeta {
   total: number;
   page: number;
   limit: number;
@@ -19,7 +18,7 @@ interface PaginationMeta {
   hasPrev: boolean;
 }
 
-interface FindByDateResponse {
+export interface FindByDateResponse {
   data: any[];
   meta: PaginationMeta;
 }
@@ -38,10 +37,10 @@ export class EventsService {
     } = filters;
 
     const skip = (page - 1) * limit;
-    const where: Prisma.EventWhereInput = {};
+    const where: any = {};
 
     if (sport) {
-      where.sport = sport;
+      where.sport = sport as any;
     }
 
     if (leagueId) {
@@ -53,7 +52,7 @@ export class EventsService {
       const endDate = new Date(date);
       endDate.setDate(endDate.getDate() + 1);
 
-      where.startTime = {
+      where.kickoffAt = {
         gte: startDate,
         lt: endDate,
       };
@@ -72,7 +71,7 @@ export class EventsService {
             where: { isActive: true },
           },
         },
-        orderBy: { startTime: 'asc' },
+        orderBy: { kickoffAt: 'asc' },
       }),
       this.prisma.event.count({ where }),
     ]);
@@ -128,15 +127,15 @@ export class EventsService {
     const now = new Date();
     const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-    const where: Prisma.EventWhereInput = {
-      startTime: {
+    const where: any = {
+      kickoffAt: {
         gte: now,
         lte: next24h,
       },
     };
 
     if (sport) {
-      where.sport = sport;
+      where.sport = sport as any;
     }
 
     return this.prisma.event.findMany({
@@ -147,19 +146,19 @@ export class EventsService {
         homeTeam: true,
         awayTeam: true,
       },
-      orderBy: { startTime: 'asc' },
+      orderBy: { kickoffAt: 'asc' },
     });
   }
 
   async findLive(sport?: string) {
-    const where: Prisma.EventWhereInput = {
+    const where: any = {
       status: {
         in: ['LIVE', 'HALF_TIME'],
       },
     };
 
     if (sport) {
-      where.sport = sport;
+      where.sport = sport as any;
     }
 
     return this.prisma.event.findMany({
@@ -170,19 +169,19 @@ export class EventsService {
         awayTeam: true,
         matchStats: true,
       },
-      orderBy: { startTime: 'desc' },
+      orderBy: { kickoffAt: 'desc' },
     });
   }
 
   async getSportSummary(date?: string) {
-    const where: Prisma.EventWhereInput = {};
+    const where: any = {};
 
     if (date) {
       const startDate = new Date(date);
       const endDate = new Date(date);
       endDate.setDate(endDate.getDate() + 1);
 
-      where.startTime = {
+      where.kickoffAt = {
         gte: startDate,
         lt: endDate,
       };
@@ -196,15 +195,15 @@ export class EventsService {
       },
     });
 
-    return results.map((result) => ({
+    return results.map((result: any) => ({
       sport: result.sport,
       count: result._count.id,
     }));
   }
 
   async getLeaguesForDate(sport: string, date?: string) {
-    const where: Prisma.EventWhereInput = {
-      sport,
+    const where: any = {
+      sport: sport as any,
     };
 
     if (date) {
@@ -212,7 +211,7 @@ export class EventsService {
       const endDate = new Date(date);
       endDate.setDate(endDate.getDate() + 1);
 
-      where.startTime = {
+      where.kickoffAt = {
         gte: startDate,
         lt: endDate,
       };
@@ -227,7 +226,7 @@ export class EventsService {
     });
 
     const leagueData = await Promise.all(
-      leagues.map(async (league) => {
+      leagues.map(async (league: any) => {
         const leagueInfo = await this.prisma.league.findUnique({
           where: { id: league.leagueId },
         });

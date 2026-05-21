@@ -32,7 +32,7 @@ export class ApiFootballAdapter implements IDataProvider {
   private requestTimestamps: number[] = [];
 
   constructor(private configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('API_FOOTBALL_KEY');
+    this.apiKey = this.configService.get<string>('API_FOOTBALL_KEY') || '';
     if (!this.apiKey) {
       throw new Error('API_FOOTBALL_KEY not configured');
     }
@@ -90,7 +90,7 @@ export class ApiFootballAdapter implements IDataProvider {
         );
       }
 
-      const data: ApiFootballResponse<T> = await response.json();
+      const data = await response.json() as ApiFootballResponse<T>;
 
       if (data.errors && Object.keys(data.errors).length > 0) {
         this.logger.error(`API errors:`, data.errors);

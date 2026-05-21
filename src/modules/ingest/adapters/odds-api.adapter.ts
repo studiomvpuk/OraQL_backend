@@ -31,7 +31,7 @@ export class OddsApiAdapter implements Partial<IDataProvider> {
   private readonly maxRequestsPerDay = 500;
 
   constructor(private configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('ODDS_API_KEY');
+    this.apiKey = this.configService.get<string>('ODDS_API_KEY') || '';
     if (!this.apiKey) {
       throw new Error('ODDS_API_KEY not configured');
     }
@@ -58,7 +58,7 @@ export class OddsApiAdapter implements Partial<IDataProvider> {
         );
       }
 
-      const data: OddsApiResponse = await response.json();
+      const data = await response.json() as OddsApiResponse;
 
       if (!data.success || !data.data) {
         this.logger.warn(`No odds data found for fixture ${fixtureExternalId}`);

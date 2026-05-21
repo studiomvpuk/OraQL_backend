@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class MarketsService {
@@ -9,12 +8,12 @@ export class MarketsService {
   constructor(private prisma: PrismaService) {}
 
   async findByEvent(eventId: string, category?: string) {
-    const where: Prisma.MarketWhereInput = {
+    const where: any = {
       eventId,
     };
 
     if (category) {
-      where.category = category;
+      where.category = category as any;
     }
 
     return this.prisma.market.findMany({
@@ -41,13 +40,13 @@ export class MarketsService {
   }
 
   async findValueBets(date?: string, sport?: string) {
-    const where: Prisma.MarketWhereInput = {
+    const where: any = {
       isValueBet: true,
     };
 
     if (sport) {
       where.event = {
-        sport,
+        sport: sport as any,
       };
     }
 
@@ -58,7 +57,7 @@ export class MarketsService {
 
       where.event = {
         ...where.event,
-        startTime: {
+        kickoffAt: {
           gte: startDate,
           lt: endDate,
         },
@@ -129,7 +128,7 @@ export class MarketsService {
     });
 
     const updates = markets
-      .filter((market) => {
+      .filter((market: any) => {
         if (!market.oracleProbability || !market.impliedProbability) {
           return false;
         }
@@ -139,7 +138,7 @@ export class MarketsService {
         );
         return diff >= this.VALUE_BET_THRESHOLD;
       })
-      .map((market) =>
+      .map((market: any) =>
         this.prisma.market.update({
           where: { id: market.id },
           data: { isValueBet: true },

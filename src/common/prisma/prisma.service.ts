@@ -28,7 +28,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     });
 
     // Log queries in development
-    this.$on('query', (e: any) => {
+    (this as any).$on('query', (e: any) => {
       if (process.env.NODE_ENV === 'development') {
         this.logger.debug(`Query: ${e.query}`);
         this.logger.debug(`Duration: ${e.duration}ms`);
@@ -36,7 +36,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     });
 
     // Log errors
-    this.$on('error', (e: any) => {
+    (this as any).$on('error', (e: any) => {
       this.logger.error(`Prisma Error: ${e.message}`);
     });
   }

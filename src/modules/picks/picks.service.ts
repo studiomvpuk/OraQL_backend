@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 interface FindTopPicksFilters {
   sport?: string;
@@ -39,7 +38,7 @@ export class PicksService {
       limit = 20,
     } = filters;
 
-    const where: Prisma.PickWhereInput = {
+    const where: any = {
       isActive: true,
       probability: {
         gte: minProbability,
@@ -49,7 +48,7 @@ export class PicksService {
     if (sport) {
       where.market = {
         event: {
-          sport,
+          sport: sport as any,
         },
       };
     }
@@ -95,7 +94,7 @@ export class PicksService {
 
     // Step 3: Create ranked picks
     const picks = await Promise.all(
-      topMarkets.map((market, index) =>
+      topMarkets.map((market: any, index: number) =>
         this.prisma.pick.create({
           data: {
             eventId,
