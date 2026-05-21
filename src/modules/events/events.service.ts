@@ -104,7 +104,7 @@ export class EventsService {
               where: { isActive: true },
             },
           },
-          orderBy: [{ category: 'asc' }, { oracleProbability: 'desc' }],
+          orderBy: [{ category: 'asc' }, { probability: 'desc' }],
         },
         picks: {
           where: { isActive: true },

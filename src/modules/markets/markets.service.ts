@@ -23,7 +23,7 @@ export class MarketsService {
           where: { isActive: true },
         },
       },
-      orderBy: [{ category: 'asc' }, { oracleProbability: 'desc' }],
+      orderBy: [{ category: 'asc' }, { probability: 'desc' }],
     });
   }
 
@@ -82,44 +82,56 @@ export class MarketsService {
   async upsertMany(
     eventId: string,
     markets: Array<{
-      externalId: string;
       name: string;
       category: string;
-      options: any[];
-      oracleProbability: number;
+      line?: number;
+      probability: number;
+      confidence: number;
       impliedProbability?: number;
-      odds?: number;
+      explanation?: string;
     }>,
   ) {
-    const upserts = markets.map((market) =>
-      this.prisma.market.upsert({
+    const results = [];
+
+    for (const market of markets) {
+      // Try to find existing market by eventId + name + line
+      const existing = await this.prisma.market.findFirst({
         where: {
-          externalId_eventId: {
-            externalId: market.externalId,
-            eventId,
-          },
-        },
-        update: {
-          name: market.name,
-          oracleProbability: market.oracleProbability,
-          impliedProbability: market.impliedProbability,
-          odds: market.odds,
-          options: market.options,
-        },
-        create: {
-          externalId: market.externalId,
           eventId,
           name: market.name,
-          category: market.category,
-          options: market.options,
-          oracleProbability: market.oracleProbability,
-          impliedProbability: market.impliedProbability,
-          odds: market.odds,
+          line: market.line ?? null,
         },
-      }),
-    );
+      });
 
-    return Promise.all(upserts);
+      if (existing) {
+        const updated = await this.prisma.market.update({
+          where: { id: existing.id },
+          data: {
+            probability: market.probability,
+            confidence: market.confidence,
+            impliedProbability: market.impliedProbability,
+            explanation: market.explanation,
+          },
+        });
+        results.push(updated);
+      } else {
+        const created = await this.prisma.market.create({
+          data: {
+            eventId,
+            name: market.name,
+            category: market.category as any,
+            line: market.line,
+            probability: market.probability,
+            confidence: market.confidence,
+            impliedProbability: market.impliedProbability,
+            explanation: market.explanation,
+          },
+        });
+        results.push(created);
+      }
+    }
+
+    return results;
   }
 
   async updateValueBetFlags(eventId: string) {
@@ -129,12 +141,12 @@ export class MarketsService {
 
     const updates = markets
       .filter((market: any) => {
-        if (!market.oracleProbability || !market.impliedProbability) {
+        if (!market.probability || !market.impliedProbability) {
           return false;
         }
 
         const diff = Math.abs(
-          market.oracleProbability - market.impliedProbability,
+          market.probability - market.impliedProbability,
         );
         return diff >= this.VALUE_BET_THRESHOLD;
       })

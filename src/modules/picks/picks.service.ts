@@ -84,11 +84,11 @@ export class PicksService {
     const topMarkets = await this.prisma.market.findMany({
       where: {
         eventId,
-        oracleProbability: {
+        probability: {
           gte: this.MIN_PROBABILITY,
         },
       },
-      orderBy: { oracleProbability: 'desc' },
+      orderBy: { probability: 'desc' },
       take: this.MAX_PICKS_PER_EVENT,
     });
 
@@ -99,11 +99,11 @@ export class PicksService {
           data: {
             eventId,
             marketId: market.id,
-            probability: market.oracleProbability,
-            odds: market.odds || 1.0,
+            probability: market.probability,
+            confidence: market.confidence,
             rank: index + 1,
             isActive: true,
-            reason: `Oracle ML model prediction for ${market.name}`,
+            explanation: `Oracle ML model prediction for ${market.name}`,
           },
           include: {
             market: true,

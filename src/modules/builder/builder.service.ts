@@ -33,7 +33,7 @@ export class BuilderService {
   }
 
   async getSelections(userId: string): Promise<SelectionsResponse> {
-    const selections = await this.prisma.selection.findMany({
+    const selections = await this.prisma.builderSelection.findMany({
       where: { userId },
       include: {
         market: {
@@ -49,10 +49,10 @@ export class BuilderService {
       marketId: sel.marketId,
       marketName: sel.market.name,
       eventId: sel.market.eventId,
-      eventName: `${sel.market.event.homeTeam} vs ${sel.market.event.awayTeam}`,
-      probability: sel.market.oracleProbability || 0,
-      odds: sel.market.odds || 1,
-      selectedOutcome: sel.selectedOutcome,
+      eventName: `Event ${sel.market.eventId}`,
+      probability: sel.market.probability || 0,
+      odds: sel.addedProbability || 1,
+      selectedOutcome: sel.marketId,
     }));
 
     const probabilities = formattedSelections.map((s: SelectionItem) => s.probability);
@@ -82,7 +82,7 @@ export class BuilderService {
     }
 
     // Check for Over/Under conflicts
-    const existingSelections = await this.prisma.selection.findMany({
+    const existingSelections = await this.prisma.builderSelection.findMany({
       where: { userId },
       include: {
         market: true,
@@ -95,22 +95,19 @@ export class BuilderService {
 
     for (const sel of sameEventSelections) {
       if (
-        (sel.market.category === 'OVER_UNDER' &&
-          market.category === 'OVER_UNDER') ||
-        (sel.selectedOutcome === 'OVER' && selectedOutcome === 'UNDER') ||
-        (sel.selectedOutcome === 'UNDER' && selectedOutcome === 'OVER')
+        (sel.market.category === 'GOALS' &&
+          market.category === 'GOALS')
       ) {
         throw new BadRequestException(
-          'Cannot add both Over and Under selections for the same event',
+          'Cannot add conflicting goal selections for the same event',
         );
       }
     }
 
-    return this.prisma.selection.create({
+    return this.prisma.builderSelection.create({
       data: {
         userId,
         marketId,
-        selectedOutcome,
       },
       include: {
         market: {
@@ -123,7 +120,7 @@ export class BuilderService {
   }
 
   async removeSelection(userId: string, selectionId: string) {
-    const selection = await this.prisma.selection.findUnique({
+    const selection = await this.prisma.builderSelection.findUnique({
       where: { id: selectionId },
     });
 
@@ -131,13 +128,13 @@ export class BuilderService {
       throw new BadRequestException('Selection not found');
     }
 
-    return this.prisma.selection.delete({
+    return this.prisma.builderSelection.delete({
       where: { id: selectionId },
     });
   }
 
   async clearSelections(userId: string) {
-    return this.prisma.selection.deleteMany({
+    return this.prisma.builderSelection.deleteMany({
       where: { userId },
     });
   }

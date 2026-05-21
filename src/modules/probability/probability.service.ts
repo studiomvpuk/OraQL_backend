@@ -55,7 +55,7 @@ export class ProbabilityService {
       // Fetch related data
       const homeHistory = await this.getTeamHistory(event.homeTeamId);
       const awayHistory = await this.getTeamHistory(event.awayTeamId);
-      const injuries = await this.prisma.injury.findMany({
+      const injuries = await this.prisma.playerInjury.findMany({
         where: {
           player: {
             teamId: { in: [event.homeTeamId, event.awayTeamId] },
@@ -107,39 +107,60 @@ export class ProbabilityService {
 
       // Save markets and generate explanations
       for (const result of markets) {
-        await this.prisma.market.upsert({
+        // Find existing market by eventId + name + line
+        const existing = await this.prisma.market.findFirst({
           where: {
-            eventId_name_line: {
-              eventId,
-              name: result.market,
-              line: result.line,
-            },
-          },
-          update: {
-            probability: result.probability,
-            confidence: result.confidence,
-            explanation: result.explanation,
-            updatedAt: new Date(),
-          },
-          create: {
             eventId,
             name: result.market,
-            line: result.line,
-            probability: result.probability,
-            confidence: result.confidence,
-            explanation: result.explanation,
+            line: result.line ?? null,
           },
         });
+
+        // Determine the category from the market name
+        const category = this.marketNameToCategory(result.market);
+
+        if (existing) {
+          await this.prisma.market.update({
+            where: { id: existing.id },
+            data: {
+              probability: result.probability,
+              confidence: result.confidence,
+              explanation: result.explanation,
+              updatedAt: new Date(),
+            },
+          });
+        } else {
+          await this.prisma.market.create({
+            data: {
+              eventId,
+              name: result.market,
+              category: category as any,
+              line: result.line,
+              probability: result.probability,
+              confidence: result.confidence,
+              explanation: result.explanation,
+            },
+          });
+        }
       }
 
       this.logger.log(`Probabilities computed and saved for event ${eventId}`);
-
-      // Broadcast via WebSocket (implementation would depend on WebSocket gateway)
-      // this.websocketGateway.emitEventMarkets(eventId, markets);
     } catch (error) {
       this.logger.error(`Failed to compute probabilities for event ${eventId}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Map market name to MarketCategory enum
+   */
+  private marketNameToCategory(marketName: string): string {
+    if (marketName.startsWith('MATCH_RESULT')) return 'MATCH_RESULT';
+    if (marketName.startsWith('GOALS')) return 'GOALS';
+    if (marketName.startsWith('CORNERS')) return 'CORNERS';
+    if (marketName.startsWith('CARDS')) return 'CARDS';
+    if (marketName.startsWith('BTTS')) return 'GOALS';
+    return 'SPECIAL';
   }
 
   /**
@@ -348,7 +369,6 @@ export class ProbabilityService {
     let prob = 0;
 
     if (outcome === 'home') {
-      // Sum of all combinations where home > away
       for (let h = 1; h <= 10; h++) {
         for (let a = 0; a < h; a++) {
           const hProb = (Math.exp(-homeGoals) * Math.pow(homeGoals, h)) / this.factorial(h);
@@ -357,14 +377,12 @@ export class ProbabilityService {
         }
       }
     } else if (outcome === 'draw') {
-      // Sum of all combinations where home === away
       for (let goals = 0; goals <= 10; goals++) {
         const hProb = (Math.exp(-homeGoals) * Math.pow(homeGoals, goals)) / this.factorial(goals);
         const aProb = (Math.exp(-awayGoals) * Math.pow(awayGoals, goals)) / this.factorial(goals);
         prob += hProb * aProb;
       }
     } else {
-      // Sum of all combinations where away > home
       for (let a = 1; a <= 10; a++) {
         for (let h = 0; h < a; h++) {
           const hProb = (Math.exp(-homeGoals) * Math.pow(homeGoals, h)) / this.factorial(h);
@@ -390,7 +408,7 @@ export class ProbabilityService {
       },
       orderBy: { kickoffAt: 'desc' },
       take: this.MATCH_WINDOW,
-      include: { stats: true },
+      include: { matchStats: true },
     });
 
     if (events.length === 0) {
@@ -421,11 +439,11 @@ export class ProbabilityService {
 
     for (const event of events) {
       const isHome = event.homeTeamId === teamId;
-      const teamStats = event.stats.find(
+      const teamMatchStats = event.matchStats.find(
         (s: any) => s.teamId === teamId,
       );
 
-      if (!teamStats) continue;
+      if (!teamMatchStats) continue;
 
       totalMatches++;
 
@@ -440,18 +458,18 @@ export class ProbabilityService {
       }
 
       // Win calculation
-      if (goalsScored > goalsAgainst) {
+      if ((goalsScored ?? 0) > (goalsAgainst ?? 0)) {
         totalWins++;
-      } else if (goalsScored === goalsAgainst) {
+      } else if ((goalsScored ?? 0) === (goalsAgainst ?? 0)) {
         totalWins += 0.33; // Draw counts as partial win
       }
 
       // Stats
-      totalCorners += teamStats.corners || 0;
-      totalYellowCards += teamStats.yellowCards || 0;
-      totalRedCards += teamStats.redCards || 0;
-      totalPossession += teamStats.possession || 50;
-      totalShotsOnTarget += teamStats.shotsOnTarget || 0;
+      totalCorners += teamMatchStats.corners || 0;
+      totalYellowCards += teamMatchStats.yellowCards || 0;
+      totalRedCards += teamMatchStats.redCards || 0;
+      totalPossession += teamMatchStats.possession || 50;
+      totalShotsOnTarget += teamMatchStats.shotsOnTarget || 0;
     }
 
     const avgMatches = totalMatches || 1;
@@ -479,7 +497,6 @@ export class ProbabilityService {
     let adjustmentFactor = 1.0;
 
     for (const injury of injuries) {
-      // Key players (main attackers/defenders) get higher adjustment
       const isKeyPlayer = injury.player.position === 'F' || injury.player.position === 'D';
       const severityFactor =
         injury.severity === 'SEVERE'
