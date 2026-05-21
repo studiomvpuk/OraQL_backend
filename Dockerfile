@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 # Install dependencies
 COPY package*.json ./
 RUN npm install
@@ -11,7 +14,7 @@ RUN npm install
 COPY . .
 
 # Generate Prisma client
-RUN npm run prisma:generate
+RUN npx prisma generate
 
 # Build application
 RUN npm run build
@@ -21,12 +24,16 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install OpenSSL for Prisma engine at runtime
+RUN apk add --no-cache openssl
+
 # Install only production dependencies
 COPY package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
-# Copy Prisma files
+# Copy Prisma schema and generate client in production context
 COPY prisma ./prisma
+RUN npx prisma generate
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
@@ -37,12 +44,5 @@ ENV NODE_ENV=production
 # Expose port
 EXPOSE 4000
 
-# Determine which command to run based on BUILD_TARGET env variable
-# Default is API, can be set to WORKER for background job processing
-ENV BUILD_TARGET=api
-
-CMD if [ "$BUILD_TARGET" = "worker" ]; then \
-      node dist/worker.js; \
-    else \
-      node dist/main.js; \
-    fi
+# Run migrations then start the API server
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
