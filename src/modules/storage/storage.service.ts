@@ -10,18 +10,22 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
-  private s3Client: S3Client;
+  private s3Client: S3Client | null = null;
   private readonly bucket: string;
   private readonly region: string;
+  private readonly isConfigured: boolean;
 
   constructor() {
     this.region = process.env.CLOUDFLARE_R2_REGION || 'auto';
     this.bucket = process.env.CLOUDFLARE_R2_BUCKET || '';
 
     if (!this.bucket) {
-      throw new Error('CLOUDFLARE_R2_BUCKET environment variable is required');
+      this.logger.warn('CLOUDFLARE_R2_BUCKET not set — storage operations will be unavailable');
+      this.isConfigured = false;
+      return;
     }
 
+    this.isConfigured = true;
     this.s3Client = new S3Client({
       region: this.region,
       credentials: {
@@ -32,6 +36,12 @@ export class StorageService {
     });
 
     this.validateConfig();
+  }
+
+  private ensureConfigured(): void {
+    if (!this.isConfigured || !this.s3Client) {
+      throw new BadRequestException('Storage is not configured. Set CLOUDFLARE_R2_* environment variables.');
+    }
   }
 
   private validateConfig(): void {
@@ -51,6 +61,7 @@ export class StorageService {
   }
 
   async upload(key: string, body: Buffer | string, contentType: string) {
+    this.ensureConfigured();
     if (!key || key.length === 0) {
       throw new BadRequestException('Key cannot be empty');
     }
@@ -65,7 +76,7 @@ export class StorageService {
         ContentType: contentType,
       });
 
-      await this.s3Client.send(command);
+      await this.s3Client!.send(command);
       this.logger.log(`Successfully uploaded file to R2: ${key}`);
 
       return {
@@ -81,6 +92,7 @@ export class StorageService {
   }
 
   async download(key: string) {
+    this.ensureConfigured();
     if (!key || key.length === 0) {
       throw new BadRequestException('Key cannot be empty');
     }
@@ -91,7 +103,7 @@ export class StorageService {
         Key: key,
       });
 
-      const response = await this.s3Client.send(command);
+      const response = await this.s3Client!.send(command);
       const body = await response.Body?.transformToByteArray();
 
       this.logger.log(`Successfully downloaded file from R2: ${key}`);
@@ -108,6 +120,7 @@ export class StorageService {
   }
 
   async delete(key: string) {
+    this.ensureConfigured();
     if (!key || key.length === 0) {
       throw new BadRequestException('Key cannot be empty');
     }
@@ -118,7 +131,7 @@ export class StorageService {
         Key: key,
       });
 
-      await this.s3Client.send(command);
+      await this.s3Client!.send(command);
       this.logger.log(`Successfully deleted file from R2: ${key}`);
 
       return {
@@ -132,6 +145,7 @@ export class StorageService {
   }
 
   async getSignedUrl(key: string, expiresIn = 3600) {
+    this.ensureConfigured();
     if (!key || key.length === 0) {
       throw new BadRequestException('Key cannot be empty');
     }
@@ -148,7 +162,7 @@ export class StorageService {
         Key: key,
       });
 
-      const signedUrl = await getSignedUrl(this.s3Client, command, {
+      const signedUrl = await getSignedUrl(this.s3Client!, command, {
         expiresIn,
       });
 
