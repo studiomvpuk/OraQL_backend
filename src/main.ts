@@ -12,6 +12,9 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
+  // Global route prefix
+  app.setGlobalPrefix('api/v1');
+
   // Security
   app.use(helmet());
 
