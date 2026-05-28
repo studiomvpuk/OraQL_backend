@@ -27,14 +27,22 @@ interface ApiFootballResponse<T> {
 export class ApiFootballAdapter implements IDataProvider {
   private readonly logger = new Logger(ApiFootballAdapter.name);
   private readonly apiKey: string;
-  private readonly baseUrl = 'https://api-football-v1.p.rapidapi.com/v3';
+  private readonly baseUrl: string;
+  private readonly useRapidApi: boolean;
   private readonly maxRequestsPerMinute = 30;
   private requestTimestamps: number[] = [];
 
   constructor(private configService: ConfigService) {
     this.apiKey = this.configService.get<string>('API_FOOTBALL_KEY') || '';
+    // Support both direct (api-sports.io) and RapidAPI hosting
+    this.useRapidApi = this.configService.get<string>('API_FOOTBALL_HOST') === 'rapidapi';
+    this.baseUrl = this.useRapidApi
+      ? 'https://api-football-v1.p.rapidapi.com/v3'
+      : 'https://v3.football.api-sports.io';
     if (!this.apiKey) {
       this.logger.warn('API_FOOTBALL_KEY not configured — data ingestion will be unavailable');
+    } else {
+      this.logger.log(`API-Football adapter initialized (${this.useRapidApi ? 'RapidAPI' : 'Direct'})`);
     }
   }
 
@@ -83,12 +91,18 @@ export class ApiFootballAdapter implements IDataProvider {
     });
 
     try {
+      const headers: Record<string, string> = this.useRapidApi
+        ? {
+            'x-rapidapi-key': this.apiKey,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+          }
+        : {
+            'x-apisports-key': this.apiKey,
+          };
+
       const response = await fetch(url.toString(), {
         method: 'GET',
-        headers: {
-          'x-rapidapi-key': this.apiKey,
-          'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
-        },
+        headers,
       });
 
       if (!response.ok) {
