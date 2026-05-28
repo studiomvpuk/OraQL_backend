@@ -86,17 +86,23 @@ export class ProbabilityController {
               data: { isActive: false },
             });
 
-            // Get markets with meaningful edge (55-95% range)
-            // and pick the best from each category for variety
+            // Get markets in useful probability range (55-95%)
             const allMarkets = await this.prisma.market.findMany({
               where: {
                 eventId: event.id,
                 probability: { gte: 0.55, lte: 0.95 },
               },
-              orderBy: { probability: 'desc' },
             });
 
-            // Group by category, take best per category, then fill remaining slots
+            // Score markets by "edge quality" — prefer confident but not trivial picks.
+            // Sweet spot is 60-80%; markets near 95% are boring certainties.
+            const scoreMarket = (prob: number) => {
+              if (prob >= 0.90) return prob * 0.6;   // heavily penalise near-certainties
+              if (prob >= 0.80) return prob * 0.85;  // slight penalty
+              return prob;                            // 55-80% score at face value
+            };
+
+            // Group by category, take best-scored per category for variety
             const byCategory = new Map<string, typeof allMarkets>();
             for (const m of allMarkets) {
               const cat = m.category || 'OTHER';
@@ -104,20 +110,29 @@ export class ProbabilityController {
               byCategory.get(cat)!.push(m);
             }
 
+            // Sort each category by edge quality score
+            for (const [, markets] of byCategory) {
+              markets.sort((a, b) => scoreMarket(b.probability) - scoreMarket(a.probability));
+            }
+
             const topMarkets: typeof allMarkets = [];
-            // First pass: best market per category
+            // First pass: best-scored market per category
             for (const [, markets] of byCategory) {
               if (markets.length > 0 && topMarkets.length < 5) {
                 topMarkets.push(markets[0]);
               }
             }
-            // Second pass: fill remaining slots with next-best overall
-            for (const m of allMarkets) {
+            // Second pass: fill remaining slots
+            const remaining = allMarkets
+              .filter((m) => !topMarkets.some((t) => t.id === m.id))
+              .sort((a, b) => scoreMarket(b.probability) - scoreMarket(a.probability));
+            for (const m of remaining) {
               if (topMarkets.length >= 5) break;
-              if (!topMarkets.some((t) => t.id === m.id)) {
-                topMarkets.push(m);
-              }
+              topMarkets.push(m);
             }
+
+            // Sort final picks by edge quality for ranking
+            topMarkets.sort((a, b) => scoreMarket(b.probability) - scoreMarket(a.probability));
 
             for (let i = 0; i < topMarkets.length; i++) {
               await this.prisma.pick.upsert({

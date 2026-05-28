@@ -40,16 +40,15 @@ export class PicksService {
 
     const where: any = {
       isActive: true,
+      rank: 1, // Best pick per event only — gives variety across matches
       probability: {
         gte: minProbability,
       },
     };
 
     if (sport) {
-      where.market = {
-        event: {
-          sport: sport as any,
-        },
+      where.event = {
+        sport: sport as any,
       };
     }
 
@@ -76,7 +75,7 @@ export class PicksService {
           },
         },
       },
-      orderBy: [{ rank: 'asc' }, { probability: 'desc' }],
+      orderBy: [{ probability: 'desc' }, { createdAt: 'desc' }],
     });
 
     return picks;
