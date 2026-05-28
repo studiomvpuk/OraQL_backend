@@ -194,9 +194,7 @@ export class ApiFootballAdapter implements IDataProvider {
         kickoffAt: new Date(fixture.fixture.date),
         status: statusMap[fixture.fixture.status.short] || 'SCHEDULED',
         venue: fixture.fixture.venue?.name,
-        round: fixture.league.round
-          ? parseInt(fixture.league.round.split(' ').pop(), 10)
-          : undefined,
+        round: fixture.league.round || undefined,
         season: fixture.league.season,
         homeScore: fixture.goals.home,
         awayScore: fixture.goals.away,
