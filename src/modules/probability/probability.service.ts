@@ -146,7 +146,7 @@ export class ProbabilityService {
         result.probability = Math.min(0.92, Math.max(0.05, result.probability));
       }
 
-      // Save markets
+      // Save markets with value bet detection
       for (const result of markets) {
         const existing = await this.prisma.market.findFirst({
           where: {
@@ -158,15 +158,33 @@ export class ProbabilityService {
 
         const category = this.marketNameToCategory(result.market);
 
+        // Value Bet Detection (US-5.3):
+        // Compare Oracle probability vs average bookmaker implied probability.
+        // If Oracle prob exceeds implied prob by 10%+ → value bet.
+        const oddsKey = this.marketToOddsKey(result.market, result.line);
+        const avgImpliedProb = oddsLookup.get(oddsKey) ?? null;
+        let valueGap: number | null = null;
+        let isValueBet = false;
+
+        if (avgImpliedProb && avgImpliedProb > 0.01) {
+          valueGap = result.probability - avgImpliedProb;
+          isValueBet = valueGap >= 0.10; // 10%+ gap = value bet
+        }
+
+        const marketData = {
+          probability: result.probability,
+          confidence: result.confidence,
+          explanation: result.explanation,
+          impliedProbability: avgImpliedProb,
+          valueGap,
+          isValueBet,
+          probabilityUpdatedAt: new Date(),
+        };
+
         if (existing) {
           await this.prisma.market.update({
             where: { id: existing.id },
-            data: {
-              probability: result.probability,
-              confidence: result.confidence,
-              explanation: result.explanation,
-              updatedAt: new Date(),
-            },
+            data: { ...marketData, updatedAt: new Date() },
           });
         } else {
           await this.prisma.market.create({
@@ -175,9 +193,7 @@ export class ProbabilityService {
               name: result.market,
               category: category as any,
               line: result.line,
-              probability: result.probability,
-              confidence: result.confidence,
-              explanation: result.explanation,
+              ...marketData,
             },
           });
         }
