@@ -318,7 +318,9 @@ export class ProbabilityService {
   }
 
   /**
-   * Compute BTTS (Both Teams To Score) probability
+   * Compute BTTS (Both Teams To Score) probability using Poisson model.
+   * P(BTTS) = 1 - P(home=0) - P(away=0) + P(both=0)
+   * where P(team=0) = e^(-lambda)
    */
   private computeBTTS(
     homeStats: TeamStats,
@@ -326,16 +328,24 @@ export class ProbabilityService {
     homeInjuryFactor: number,
     awayInjuryFactor: number,
   ): ProbabilityResult {
-    const homeScoreProb = (homeStats.matchesScored / homeStats.matchesPlayed) * homeInjuryFactor;
-    const awayScoreProb = (awayStats.matchesScored / awayStats.matchesPlayed) * awayInjuryFactor;
+    const homeLambda = homeStats.avgGoalsScored * homeInjuryFactor;
+    const awayLambda = awayStats.avgGoalsScored * awayInjuryFactor;
 
-    const bttsProb = homeScoreProb * awayScoreProb;
+    // Poisson: P(goals = 0) = e^(-lambda)
+    const homeZeroProb = Math.exp(-homeLambda);
+    const awayZeroProb = Math.exp(-awayLambda);
+
+    // P(BTTS) = 1 - P(home=0) - P(away=0) + P(home=0 AND away=0)
+    const bttsProb = 1 - homeZeroProb - awayZeroProb + (homeZeroProb * awayZeroProb);
+
+    // Clamp to [0.01, 0.95] — no market should ever be 0% or 100%
+    const clampedProb = Math.min(0.95, Math.max(0.01, bttsProb));
 
     return {
       market: 'BTTS_YES',
-      probability: bttsProb,
+      probability: clampedProb,
       confidence: 0.78,
-      explanation: `Home team scores in ${(homeScoreProb * 100).toFixed(1)}% of matches, away team in ${(awayScoreProb * 100).toFixed(1)}%`,
+      explanation: `Poisson BTTS model: home xG=${homeLambda.toFixed(2)}, away xG=${awayLambda.toFixed(2)}. P(home scores)=${((1 - homeZeroProb) * 100).toFixed(1)}%, P(away scores)=${((1 - awayZeroProb) * 100).toFixed(1)}%`,
     };
   }
 
