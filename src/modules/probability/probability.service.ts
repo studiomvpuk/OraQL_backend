@@ -119,7 +119,7 @@ export class ProbabilityService {
       // BTTS
       markets.push(this.computeBTTS(homeHistory, awayHistory, homeInjuryFactor, awayInjuryFactor));
 
-      // Post-process: blend with bookmaker odds + add per-event variance
+      // Post-process: blend with bookmaker odds + add per-market variance
       for (const result of markets) {
         const oddsKey = this.marketToOddsKey(result.market, result.line);
         const bookmakerProb = oddsLookup.get(oddsKey);
@@ -131,15 +131,19 @@ export class ProbabilityService {
           result.confidence = Math.min(0.92, result.confidence + 0.05);
           result.explanation += ` | Calibrated with bookmaker consensus (${(bookmakerProb * 100).toFixed(1)}%)`;
         } else if (!hasRealHistory) {
-          // No odds, no history: add deterministic variance so events differ
-          // Variance range: ±12% of probability, seeded by event ID
-          const variance = (eventSeed - 0.5) * 0.24;
-          result.probability = result.probability + (result.probability * variance);
+          // No odds, no history: apply PER-MARKET variance seeded by
+          // hash(eventId + marketName + line) so different categories shift
+          // differently within the same event. This ensures picks vary.
+          const marketSeed = this.hashToFloat(
+            eventId + result.market + (result.line ?? ''),
+          );
+          const variance = (marketSeed - 0.5) * 0.35; // ±17.5% swing
+          result.probability = result.probability * (1 + variance);
           result.confidence = Math.max(0.5, result.confidence - 0.15);
         }
 
-        // Final clamp: [0.05, 0.95]
-        result.probability = Math.min(0.95, Math.max(0.05, result.probability));
+        // Final clamp: [0.05, 0.92] — nothing should look like a "sure thing"
+        result.probability = Math.min(0.92, Math.max(0.05, result.probability));
       }
 
       // Save markets
