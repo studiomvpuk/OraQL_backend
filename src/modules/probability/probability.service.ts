@@ -219,26 +219,30 @@ export class ProbabilityService {
     homeInjuryFactor: number,
     awayInjuryFactor: number,
   ): ProbabilityResult[] {
-    const totalGoals = (homeStats.avgGoalsScored + awayStats.avgGoalsScored) * 0.5;
+    // Expected total goals = home attack + away attack (no halving)
+    const totalGoals = homeStats.avgGoalsScored * homeInjuryFactor
+      + awayStats.avgGoalsScored * awayInjuryFactor;
     const goals: ProbabilityResult[] = [];
 
     for (const line of [0.5, 1.5, 2.5, 3.5, 4.5]) {
-      const underProb = this.poissonOverProb(totalGoals, line);
+      const overProb = this.poissonOverProb(totalGoals, line);
+      const underProb = 1 - overProb;
 
+      // Clamp to [0.01, 0.95] — trivially certain markets aren't useful
       goals.push({
         market: 'GOALS_UNDER',
         line,
-        probability: 1 - underProb, // Under probability
+        probability: Math.min(0.95, Math.max(0.01, underProb)),
         confidence: 0.8,
-        explanation: `Based on historical average of ${totalGoals.toFixed(2)} goals per match`,
+        explanation: `Expected ${totalGoals.toFixed(2)} total goals (Poisson model)`,
       });
 
       goals.push({
         market: 'GOALS_OVER',
         line,
-        probability: underProb,
+        probability: Math.min(0.95, Math.max(0.01, overProb)),
         confidence: 0.8,
-        explanation: `Expected goals total: ${totalGoals.toFixed(2)}`,
+        explanation: `Expected ${totalGoals.toFixed(2)} total goals (Poisson model)`,
       });
     }
 
@@ -255,26 +259,27 @@ export class ProbabilityService {
     awayInjuryFactor: number,
   ): ProbabilityResult[] {
     const totalCorners =
-      (homeStats.avgCorners + awayStats.avgCorners) * 0.5;
+      homeStats.avgCorners * homeInjuryFactor + awayStats.avgCorners * awayInjuryFactor;
     const corners: ProbabilityResult[] = [];
 
     for (const line of [7.5, 8.5, 9.5, 10.5, 11.5]) {
-      const underProb = this.poissonOverProb(totalCorners, line);
+      const overProb = this.poissonOverProb(totalCorners, line);
+      const underProb = 1 - overProb;
 
       corners.push({
         market: 'CORNERS_UNDER',
         line,
-        probability: 1 - underProb,
+        probability: Math.min(0.95, Math.max(0.01, underProb)),
         confidence: 0.75,
-        explanation: `Expected corners: ${totalCorners.toFixed(2)} per match`,
+        explanation: `Expected ${totalCorners.toFixed(1)} corners (Poisson model)`,
       });
 
       corners.push({
         market: 'CORNERS_OVER',
         line,
-        probability: underProb,
+        probability: Math.min(0.95, Math.max(0.01, overProb)),
         confidence: 0.75,
-        explanation: `Based on ${this.MATCH_WINDOW}-match average`,
+        explanation: `Expected ${totalCorners.toFixed(1)} corners (Poisson model)`,
       });
     }
 
@@ -291,26 +296,27 @@ export class ProbabilityService {
     awayInjuryFactor: number,
   ): ProbabilityResult[] {
     const totalCards =
-      (homeStats.avgYellowCards + awayStats.avgYellowCards) * 0.5;
+      homeStats.avgYellowCards + awayStats.avgYellowCards;
     const cards: ProbabilityResult[] = [];
 
     for (const line of [2.5, 3.5, 4.5, 5.5]) {
-      const underProb = this.poissonOverProb(totalCards, line);
+      const overProb = this.poissonOverProb(totalCards, line);
+      const underProb = 1 - overProb;
 
       cards.push({
         market: 'CARDS_UNDER',
         line,
-        probability: 1 - underProb,
+        probability: Math.min(0.95, Math.max(0.01, underProb)),
         confidence: 0.7,
-        explanation: `Average yellow cards: ${totalCards.toFixed(2)} per match`,
+        explanation: `Expected ${totalCards.toFixed(1)} yellow cards (Poisson model)`,
       });
 
       cards.push({
         market: 'CARDS_OVER',
         line,
-        probability: underProb,
+        probability: Math.min(0.95, Math.max(0.01, overProb)),
         confidence: 0.7,
-        explanation: `Based on recent form and referee patterns`,
+        explanation: `Expected ${totalCards.toFixed(1)} yellow cards (Poisson model)`,
       });
     }
 

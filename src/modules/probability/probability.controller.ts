@@ -86,15 +86,38 @@ export class ProbabilityController {
               data: { isActive: false },
             });
 
-            // Get top markets above 55% probability
-            const topMarkets = await this.prisma.market.findMany({
+            // Get markets with meaningful edge (55-95% range)
+            // and pick the best from each category for variety
+            const allMarkets = await this.prisma.market.findMany({
               where: {
                 eventId: event.id,
-                probability: { gte: 0.55 },
+                probability: { gte: 0.55, lte: 0.95 },
               },
               orderBy: { probability: 'desc' },
-              take: 5,
             });
+
+            // Group by category, take best per category, then fill remaining slots
+            const byCategory = new Map<string, typeof allMarkets>();
+            for (const m of allMarkets) {
+              const cat = m.category || 'OTHER';
+              if (!byCategory.has(cat)) byCategory.set(cat, []);
+              byCategory.get(cat)!.push(m);
+            }
+
+            const topMarkets: typeof allMarkets = [];
+            // First pass: best market per category
+            for (const [, markets] of byCategory) {
+              if (markets.length > 0 && topMarkets.length < 5) {
+                topMarkets.push(markets[0]);
+              }
+            }
+            // Second pass: fill remaining slots with next-best overall
+            for (const m of allMarkets) {
+              if (topMarkets.length >= 5) break;
+              if (!topMarkets.some((t) => t.id === m.id)) {
+                topMarkets.push(m);
+              }
+            }
 
             for (let i = 0; i < topMarkets.length; i++) {
               await this.prisma.pick.upsert({
