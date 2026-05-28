@@ -35,7 +35,9 @@ export class ProbabilityService {
   ) {}
 
   /**
-   * Main entry point: compute all probabilities for an event
+   * Main entry point: compute all probabilities for an event.
+   * Blends Poisson model output with bookmaker odds when available,
+   * and uses deterministic per-event variance to avoid identical picks.
    */
   async computeForEvent(eventId: string): Promise<void> {
     try {
@@ -79,6 +81,18 @@ export class ProbabilityService {
       const homeInjuryFactor = this.computeInjuryAdjustment(homeInjuries);
       const awayInjuryFactor = this.computeInjuryAdjustment(awayInjuries);
 
+      // Fetch bookmaker odds for this event
+      const bookmakerOdds = await this.prisma.bookmakerOdds.findMany({
+        where: { eventId },
+      });
+
+      // Build odds lookup: marketName → average implied probability across bookmakers
+      const oddsLookup = this.buildOddsLookup(bookmakerOdds);
+
+      // Deterministic per-event seed for controlled variance when using defaults
+      const eventSeed = this.hashToFloat(eventId);
+      const hasRealHistory = homeHistory.matchesPlayed > 1 || awayHistory.matchesPlayed > 1;
+
       // Compute markets
       const markets: ProbabilityResult[] = [];
 
@@ -105,9 +119,31 @@ export class ProbabilityService {
       // BTTS
       markets.push(this.computeBTTS(homeHistory, awayHistory, homeInjuryFactor, awayInjuryFactor));
 
-      // Save markets and generate explanations
+      // Post-process: blend with bookmaker odds + add per-event variance
       for (const result of markets) {
-        // Find existing market by eventId + name + line
+        const oddsKey = this.marketToOddsKey(result.market, result.line);
+        const bookmakerProb = oddsLookup.get(oddsKey);
+
+        if (bookmakerProb && bookmakerProb > 0.01 && bookmakerProb < 0.99) {
+          // Blend: 40% model, 60% bookmaker odds (odds are sharper when no history)
+          const modelWeight = hasRealHistory ? 0.6 : 0.4;
+          result.probability = result.probability * modelWeight + bookmakerProb * (1 - modelWeight);
+          result.confidence = Math.min(0.92, result.confidence + 0.05);
+          result.explanation += ` | Calibrated with bookmaker consensus (${(bookmakerProb * 100).toFixed(1)}%)`;
+        } else if (!hasRealHistory) {
+          // No odds, no history: add deterministic variance so events differ
+          // Variance range: ±12% of probability, seeded by event ID
+          const variance = (eventSeed - 0.5) * 0.24;
+          result.probability = result.probability + (result.probability * variance);
+          result.confidence = Math.max(0.5, result.confidence - 0.15);
+        }
+
+        // Final clamp: [0.05, 0.95]
+        result.probability = Math.min(0.95, Math.max(0.05, result.probability));
+      }
+
+      // Save markets
+      for (const result of markets) {
         const existing = await this.prisma.market.findFirst({
           where: {
             eventId,
@@ -116,7 +152,6 @@ export class ProbabilityService {
           },
         });
 
-        // Determine the category from the market name
         const category = this.marketNameToCategory(result.market);
 
         if (existing) {
@@ -149,6 +184,58 @@ export class ProbabilityService {
       this.logger.error(`Failed to compute probabilities for event ${eventId}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Build a lookup of average implied probabilities from bookmaker odds.
+   * Aggregates across bookmakers for each market+line combination.
+   */
+  private buildOddsLookup(bookmakerOdds: any[]): Map<string, number> {
+    const accumulator = new Map<string, { sum: number; count: number }>();
+
+    for (const odd of bookmakerOdds) {
+      if (!odd.impliedProbability) continue;
+      const key = `${odd.marketName}|${odd.line ?? ''}`;
+      const existing = accumulator.get(key) || { sum: 0, count: 0 };
+      existing.sum += odd.impliedProbability;
+      existing.count++;
+      accumulator.set(key, existing);
+    }
+
+    const lookup = new Map<string, number>();
+    for (const [key, val] of accumulator) {
+      lookup.set(key, val.sum / val.count);
+    }
+    return lookup;
+  }
+
+  /**
+   * Map internal market names to bookmaker odds market names
+   */
+  private marketToOddsKey(market: string, line?: number): string {
+    // Common mappings between our market names and The Odds API market names
+    const mappings: Record<string, string> = {
+      MATCH_RESULT_HOME: 'h2h|',
+      GOALS_OVER: `totals|${line ?? ''}`,
+      GOALS_UNDER: `totals|${line ?? ''}`,
+      BTTS_YES: 'btts|',
+    };
+    return mappings[market] || `${market}|${line ?? ''}`;
+  }
+
+  /**
+   * Deterministic hash of a string to a float in [0, 1].
+   * Used to generate per-event variance from the event ID.
+   */
+  private hashToFloat(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit int
+    }
+    // Map to [0, 1]
+    return (Math.abs(hash) % 10000) / 10000;
   }
 
   /**
