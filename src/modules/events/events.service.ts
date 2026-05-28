@@ -69,6 +69,9 @@ export class EventsService {
           awayTeam: true,
           picks: {
             where: { isActive: true },
+            include: { market: true },
+            orderBy: { rank: 'asc' },
+            take: 3,
           },
         },
         orderBy: { kickoffAt: 'asc' },
