@@ -98,7 +98,6 @@ model User {
   updatedAt        DateTime @updatedAt
 
   activityLogs     UserActivityLog[]
-  builderSelections BuilderSelection[]
 }
 
 model UserActivityLog {
@@ -336,10 +335,10 @@ model BuilderSelection {
   addedProbability Float?
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
   @@unique([userId, marketId])
+  @@index([userId])
 }
 
 model IngestJob {

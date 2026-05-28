@@ -1,136 +1,105 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
-interface SelectionItem {
-  id: string;
-  marketId: string;
-  marketName: string;
-  eventId: string;
-  eventName: string;
-  probability: number;
-  odds: number;
-  selectedOutcome: string;
-}
-
-export interface SelectionsResponse {
-  selections: SelectionItem[];
-  combinedProbability: number;
-  combinedOdds: number;
-}
-
 @Injectable()
 export class BuilderService {
   constructor(private prisma: PrismaService) {}
 
-  private calculateCombinedProbability(probabilities: number[]): number {
-    if (probabilities.length === 0) return 0;
-    return probabilities.reduce((acc, prob) => acc * prob, 1);
-  }
-
-  private calculateCombinedOdds(odds: number[]): number {
-    if (odds.length === 0) return 1;
-    return odds.reduce((acc, odd) => acc * odd, 1);
-  }
-
-  async getSelections(userId: string): Promise<SelectionsResponse> {
+  async getSelections(userId: string) {
     const selections = await this.prisma.builderSelection.findMany({
       where: { userId },
       include: {
         market: {
           include: {
-            event: true,
+            event: {
+              include: {
+                homeTeam: true,
+                awayTeam: true,
+                league: true,
+              },
+            },
           },
         },
       },
+      orderBy: { createdAt: 'asc' },
     });
 
-    const formattedSelections = selections.map((sel: any) => ({
-      id: sel.id,
-      marketId: sel.marketId,
-      marketName: sel.market.name,
-      eventId: sel.market.eventId,
-      eventName: `Event ${sel.market.eventId}`,
-      probability: sel.market.probability || 0,
-      odds: sel.addedProbability || 1,
-      selectedOutcome: sel.marketId,
-    }));
-
-    const probabilities = formattedSelections.map((s: SelectionItem) => s.probability);
-    const odds = formattedSelections.map((s: SelectionItem) => s.odds);
+    const probabilities = selections.map(
+      (s: any) => s.market?.probability || 0,
+    );
+    const combinedProbability =
+      probabilities.length > 0
+        ? probabilities.reduce((acc: number, p: number) => acc * p, 1)
+        : 1;
 
     return {
-      selections: formattedSelections,
-      combinedProbability: this.calculateCombinedProbability(probabilities),
-      combinedOdds: this.calculateCombinedOdds(odds),
+      selections,
+      count: selections.length,
+      combinedProbability,
     };
   }
 
-  async addSelection(
-    userId: string,
-    marketId: string,
-    selectedOutcome: string,
-  ) {
+  async addSelection(userId: string, marketId: string) {
     const market = await this.prisma.market.findUnique({
       where: { id: marketId },
-      include: {
-        event: true,
-      },
     });
 
     if (!market) {
       throw new BadRequestException('Market not found');
     }
 
-    // Check for Over/Under conflicts
-    const existingSelections = await this.prisma.builderSelection.findMany({
-      where: { userId },
-      include: {
-        market: true,
-      },
+    // Check for duplicate
+    const existing = await this.prisma.builderSelection.findUnique({
+      where: { userId_marketId: { userId, marketId } },
     });
-
-    const sameEventSelections = existingSelections.filter(
-      (sel: any) => sel.market.eventId === market.eventId,
-    );
-
-    for (const sel of sameEventSelections) {
-      if (
-        (sel.market.category === 'GOALS' &&
-          market.category === 'GOALS')
-      ) {
-        throw new BadRequestException(
-          'Cannot add conflicting goal selections for the same event',
-        );
-      }
+    if (existing) {
+      throw new BadRequestException('Market already in bet builder');
     }
 
-    return this.prisma.builderSelection.create({
+    // Check for conflicting selections in the same event + category
+    const existingSelections = await this.prisma.builderSelection.findMany({
+      where: { userId },
+      include: { market: true },
+    });
+
+    const conflict = existingSelections.find(
+      (sel: any) =>
+        sel.market.eventId === market.eventId &&
+        sel.market.category === market.category &&
+        sel.market.name !== market.name,
+    );
+
+    if (conflict) {
+      throw new BadRequestException(
+        `You already have a ${market.category} selection for this event. Remove it first.`,
+      );
+    }
+
+    await this.prisma.builderSelection.create({
       data: {
         userId,
         marketId,
-      },
-      include: {
-        market: {
-          include: {
-            event: true,
-          },
-        },
+        addedProbability: market.probability,
       },
     });
+
+    return this.getSelections(userId);
   }
 
-  async removeSelection(userId: string, selectionId: string) {
+  async removeSelectionByMarket(userId: string, marketId: string) {
     const selection = await this.prisma.builderSelection.findUnique({
-      where: { id: selectionId },
+      where: { userId_marketId: { userId, marketId } },
     });
 
-    if (!selection || selection.userId !== userId) {
+    if (!selection) {
       throw new BadRequestException('Selection not found');
     }
 
-    return this.prisma.builderSelection.delete({
-      where: { id: selectionId },
+    await this.prisma.builderSelection.delete({
+      where: { id: selection.id },
     });
+
+    return this.getSelections(userId);
   }
 
   async clearSelections(userId: string) {
@@ -140,24 +109,30 @@ export class BuilderService {
   }
 
   async exportSelections(userId: string): Promise<string> {
-    const response = await this.getSelections(userId);
+    const state = await this.getSelections(userId);
 
-    let exportText = 'ORACLE SPORTS BET SLIP\n';
-    exportText += '='.repeat(50) + '\n\n';
+    const lines: string[] = [
+      'OraQL_ BET SLIP',
+      '='.repeat(40),
+      '',
+    ];
 
-    response.selections.forEach((sel, index) => {
-      exportText += `${index + 1}. ${sel.eventName}\n`;
-      exportText += `   Market: ${sel.marketName}\n`;
-      exportText += `   Outcome: ${sel.selectedOutcome}\n`;
-      exportText += `   Probability: ${(sel.probability * 100).toFixed(2)}%\n`;
-      exportText += `   Odds: ${sel.odds.toFixed(2)}\n\n`;
+    state.selections.forEach((sel: any, i: number) => {
+      const event = sel.market?.event;
+      const eventName = event
+        ? `${event.homeTeam?.shortName || event.homeTeam?.name || '?'} vs ${event.awayTeam?.shortName || event.awayTeam?.name || '?'}`
+        : 'Event';
+      lines.push(`${i + 1}. ${eventName}`);
+      lines.push(`   ${sel.market.name}${sel.market.line != null ? ` (${sel.market.line})` : ''}`);
+      lines.push(`   Probability: ${((sel.market.probability || 0) * 100).toFixed(1)}%`);
+      lines.push('');
     });
 
-    exportText += '='.repeat(50) + '\n';
-    exportText += `Combined Probability: ${(response.combinedProbability * 100).toFixed(2)}%\n`;
-    exportText += `Combined Odds: ${response.combinedOdds.toFixed(2)}\n`;
-    exportText += `Generated: ${new Date().toISOString()}\n`;
+    lines.push('='.repeat(40));
+    lines.push(`Selections: ${state.count}`);
+    lines.push(`Combined: ${(state.combinedProbability * 100).toFixed(2)}%`);
+    lines.push(`Generated: ${new Date().toISOString()}`);
 
-    return exportText;
+    return lines.join('\n');
   }
 }
