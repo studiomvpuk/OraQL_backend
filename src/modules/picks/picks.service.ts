@@ -53,7 +53,7 @@ export class PicksService {
       };
     }
 
-    return this.prisma.pick.findMany({
+    const picks = await this.prisma.pick.findMany({
       where,
       take: limit,
       include: {
@@ -68,9 +68,18 @@ export class PicksService {
             },
           },
         },
+        event: {
+          include: {
+            league: true,
+            homeTeam: true,
+            awayTeam: true,
+          },
+        },
       },
       orderBy: [{ rank: 'asc' }, { probability: 'desc' }],
     });
+
+    return picks;
   }
 
   async generateForEvent(eventId: string) {

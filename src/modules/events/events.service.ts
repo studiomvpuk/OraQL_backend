@@ -197,7 +197,7 @@ export class EventsService {
 
     return results.map((result: any) => ({
       sport: result.sport,
-      count: result._count.id,
+      eventCount: result._count.id,
     }));
   }
 
