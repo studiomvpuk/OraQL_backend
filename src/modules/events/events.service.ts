@@ -108,17 +108,30 @@ export class EventsService {
         },
         picks: {
           where: { isActive: true },
+          include: {
+            market: true,
+          },
+          orderBy: { rank: 'asc' },
         },
         lineups: {
           include: {
+            team: true,
             entries: {
               include: {
                 player: true,
               },
+              orderBy: { isStarter: 'desc' },
             },
           },
         },
-        matchStats: true,
+        bookmakerOdds: {
+          orderBy: [{ marketName: 'asc' }, { bookmaker: 'asc' }],
+        },
+        matchStats: {
+          include: {
+            team: true,
+          },
+        },
       },
     });
   }
