@@ -1,11 +1,17 @@
 import { Controller, Post, Body, Logger, HttpCode } from '@nestjs/common';
-import { IsOptional, IsIn } from 'class-validator';
+import { IsOptional, IsIn, IsInt, Min, Max } from 'class-validator';
 import { IngestService } from './ingest.service';
 
 class TriggerIngestDto {
   @IsOptional()
   @IsIn(['fixtures', 'odds', 'lineups', 'all'])
   type?: 'fixtures' | 'odds' | 'lineups' | 'all';
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(7)
+  days?: number;
 }
 
 @Controller('ingest')
@@ -32,7 +38,7 @@ export class IngestController {
     try {
       if (type === 'fixtures' || type === 'all') {
         const startDate = new Date();
-        await this.ingestService.ingestFixtures(startDate);
+        await this.ingestService.ingestFixtures(startDate, dto.days || 1);
         results.fixtures = 'completed';
       }
 

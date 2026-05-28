@@ -86,12 +86,14 @@ export class IngestService {
   }
 
   /**
-   * Ingest fixtures for a given date range
+   * Ingest fixtures for a given date range.
+   * @param startDate - Start date for fixture ingestion
+   * @param days - Number of days to fetch (default 1; free API plan only allows ±1 day)
    */
-  async ingestFixtures(startDate: Date): Promise<void> {
+  async ingestFixtures(startDate: Date, days = 1): Promise<void> {
     try {
-      // Process 7-day window
-      for (let i = 0; i < 7; i++) {
+      // Process date window (free plan: 1 day, paid: up to 7)
+      for (let i = 0; i < days; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(currentDate.getDate() + i);
 
