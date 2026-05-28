@@ -217,6 +217,68 @@ export class EventsService {
     }));
   }
 
+  /**
+   * Get recent form (last 5 finished matches) for a team,
+   * plus active injuries for that team's players.
+   */
+  async getTeamContext(teamId: string) {
+    // Last 5 finished matches involving this team
+    const recentMatches = await this.prisma.event.findMany({
+      where: {
+        status: 'FINISHED',
+        OR: [
+          { homeTeamId: teamId },
+          { awayTeamId: teamId },
+        ],
+      },
+      include: {
+        homeTeam: { select: { id: true, name: true, shortName: true } },
+        awayTeam: { select: { id: true, name: true, shortName: true } },
+        league: { select: { name: true } },
+      },
+      orderBy: { kickoffAt: 'desc' },
+      take: 5,
+    });
+
+    // Compute W/D/L from the team's perspective
+    const form = recentMatches.map((m: any) => {
+      const isHome = m.homeTeamId === teamId;
+      const goalsFor = isHome ? (m.homeScore ?? 0) : (m.awayScore ?? 0);
+      const goalsAgainst = isHome ? (m.awayScore ?? 0) : (m.homeScore ?? 0);
+      let result: 'W' | 'D' | 'L' = 'D';
+      if (goalsFor > goalsAgainst) result = 'W';
+      else if (goalsFor < goalsAgainst) result = 'L';
+
+      return {
+        id: m.id,
+        opponent: isHome
+          ? { name: m.awayTeam.shortName || m.awayTeam.name, id: m.awayTeam.id }
+          : { name: m.homeTeam.shortName || m.homeTeam.name, id: m.homeTeam.id },
+        venue: isHome ? 'H' : 'A',
+        score: `${goalsFor}-${goalsAgainst}`,
+        result,
+        kickoffAt: m.kickoffAt,
+        league: m.league.name,
+      };
+    });
+
+    // Active injuries for players on this team
+    const injuries = await this.prisma.playerInjury.findMany({
+      where: {
+        isActive: true,
+        player: { teamId },
+      },
+      include: {
+        player: {
+          select: { id: true, name: true, position: true, number: true, photoUrl: true },
+        },
+      },
+      orderBy: { startDate: 'desc' },
+    });
+
+    return { form, injuries };
+  }
+
   async getLeaguesForDate(sport: string, date?: string) {
     const where: any = {
       sport: sport as any,

@@ -51,6 +51,11 @@ export class EventsController {
     return this.eventsService.findLive(sport);
   }
 
+  @Get('team/:teamId/context')
+  async getTeamContext(@Param('teamId') teamId: string) {
+    return this.eventsService.getTeamContext(teamId);
+  }
+
   @Get(':id')
   async findById(@Param('id') id: string) {
     return this.eventsService.findById(id);
