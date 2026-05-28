@@ -1,7 +1,10 @@
 import { Controller, Post, Body, Logger, HttpCode } from '@nestjs/common';
+import { IsOptional, IsIn } from 'class-validator';
 import { IngestService } from './ingest.service';
 
 class TriggerIngestDto {
+  @IsOptional()
+  @IsIn(['fixtures', 'odds', 'lineups', 'all'])
   type?: 'fixtures' | 'odds' | 'lineups' | 'all';
 }
 
