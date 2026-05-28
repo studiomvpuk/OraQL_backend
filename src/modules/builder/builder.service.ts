@@ -112,27 +112,62 @@ export class BuilderService {
     const state = await this.getSelections(userId);
 
     const lines: string[] = [
-      'OraQL_ BET SLIP',
-      '='.repeat(40),
+      '🏟️ OraQL_ Bet Slip',
+      '━'.repeat(36),
       '',
     ];
 
     state.selections.forEach((sel: any, i: number) => {
       const event = sel.market?.event;
-      const eventName = event
-        ? `${event.homeTeam?.shortName || event.homeTeam?.name || '?'} vs ${event.awayTeam?.shortName || event.awayTeam?.name || '?'}`
-        : 'Event';
-      lines.push(`${i + 1}. ${eventName}`);
-      lines.push(`   ${sel.market.name}${sel.market.line != null ? ` (${sel.market.line})` : ''}`);
-      lines.push(`   Probability: ${((sel.market.probability || 0) * 100).toFixed(1)}%`);
+      const home = event?.homeTeam?.shortName || event?.homeTeam?.name || '?';
+      const away = event?.awayTeam?.shortName || event?.awayTeam?.name || '?';
+      const league = event?.league?.name || '';
+
+      // Build a readable pick description from the raw market name
+      const pick = this.formatMarketName(sel.market.name, sel.market.line, sel.market.category);
+      const prob = ((sel.market.probability || 0) * 100).toFixed(1);
+
+      lines.push(`${i + 1}. ${home} vs ${away}`);
+      if (league) lines.push(`   ${league}`);
+      lines.push(`   Pick: ${pick}`);
+      lines.push(`   Probability: ${prob}%`);
       lines.push('');
     });
 
-    lines.push('='.repeat(40));
-    lines.push(`Selections: ${state.count}`);
-    lines.push(`Combined: ${(state.combinedProbability * 100).toFixed(2)}%`);
-    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push('━'.repeat(36));
+    lines.push(`📊 ${state.count} selection${state.count !== 1 ? 's' : ''}`);
+    lines.push(`🎯 Combined probability: ${(state.combinedProbability * 100).toFixed(2)}%`);
+    lines.push('');
+    lines.push('Powered by OraQL_');
 
     return lines.join('\n');
+  }
+
+  /**
+   * Convert raw market names like GOALS_OVER into readable text like "Over 2.5 Goals"
+   */
+  private formatMarketName(name: string, line?: number, category?: string): string {
+    const lineStr = line != null ? ` ${line}` : '';
+
+    const categoryLabel: Record<string, string> = {
+      GOALS: 'Goals',
+      CORNERS: 'Corners',
+      CARDS: 'Cards',
+    };
+    const catName = (category && categoryLabel[category]) || category || '';
+
+    if (name.includes('OVER')) return `Over${lineStr} ${catName}`.trim();
+    if (name.includes('UNDER')) return `Under${lineStr} ${catName}`.trim();
+    if (name === 'BTTS_YES') return 'Both Teams to Score — Yes';
+    if (name === 'BTTS_NO') return 'Both Teams to Score — No';
+    if (name === 'HOME_WIN') return 'Home Win';
+    if (name === 'AWAY_WIN') return 'Away Win';
+    if (name === 'DRAW') return 'Draw';
+
+    // Fallback: replace underscores, title-case
+    return name
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 }
