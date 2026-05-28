@@ -7,8 +7,10 @@ import { ApiFootballAdapter } from './adapters/api-football.adapter';
 import { OddsApiAdapter } from './adapters/odds-api.adapter';
 import { IngestService } from './ingest.service';
 import { IngestProcessor } from './ingest.processor';
+import { IngestController } from './ingest.controller';
 
 @Module({
+  controllers: [IngestController],
   imports: [
     ConfigModule,
     PrismaModule,

@@ -98,38 +98,52 @@ export class IngestService {
         const fixtures = await this.apiFootballAdapter.getFixtures(currentDate);
 
         for (const fixture of fixtures) {
-          // Upsert league
+          // Upsert league (with name/logo from fixture data)
           const league = await this.prisma.league.upsert({
             where: { externalId: fixture.leagueExternalId },
-            update: {},
+            update: {
+              ...(fixture.leagueName && { name: fixture.leagueName }),
+              ...(fixture.leagueLogoUrl && { logoUrl: fixture.leagueLogoUrl }),
+              ...(fixture.leagueCountry && { country: fixture.leagueCountry }),
+            },
             create: {
               externalId: fixture.leagueExternalId,
-              name: '', // Will be fetched separately
+              name: fixture.leagueName || 'Unknown League',
               sport: 'FOOTBALL',
+              logoUrl: fixture.leagueLogoUrl,
+              country: fixture.leagueCountry,
             },
           });
 
           // Upsert home team
           const homeTeam = await this.prisma.team.upsert({
             where: { externalId: fixture.homeTeamExternalId },
-            update: {},
+            update: {
+              ...(fixture.homeTeamName && { name: fixture.homeTeamName }),
+              ...(fixture.homeTeamLogoUrl && { logoUrl: fixture.homeTeamLogoUrl }),
+            },
             create: {
               externalId: fixture.homeTeamExternalId,
-              name: '', // Will be fetched separately
+              name: fixture.homeTeamName || 'Unknown Team',
               sport: 'FOOTBALL',
               leagueId: league.id,
+              logoUrl: fixture.homeTeamLogoUrl,
             },
           });
 
           // Upsert away team
           const awayTeam = await this.prisma.team.upsert({
             where: { externalId: fixture.awayTeamExternalId },
-            update: {},
+            update: {
+              ...(fixture.awayTeamName && { name: fixture.awayTeamName }),
+              ...(fixture.awayTeamLogoUrl && { logoUrl: fixture.awayTeamLogoUrl }),
+            },
             create: {
               externalId: fixture.awayTeamExternalId,
-              name: '', // Will be fetched separately
+              name: fixture.awayTeamName || 'Unknown Team',
               sport: 'FOOTBALL',
               leagueId: league.id,
+              logoUrl: fixture.awayTeamLogoUrl,
             },
           });
 

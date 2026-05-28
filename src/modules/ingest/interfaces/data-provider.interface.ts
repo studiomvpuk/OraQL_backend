@@ -6,8 +6,15 @@
 export interface FixtureData {
   externalId: string;
   leagueExternalId: string;
+  leagueName?: string;
+  leagueLogoUrl?: string;
+  leagueCountry?: string;
   homeTeamExternalId: string;
+  homeTeamName?: string;
+  homeTeamLogoUrl?: string;
   awayTeamExternalId: string;
+  awayTeamName?: string;
+  awayTeamLogoUrl?: string;
   kickoffAt: Date;
   status: 'SCHEDULED' | 'LIVE' | 'HALF_TIME' | 'FINISHED' | 'POSTPONED' | 'CANCELLED' | 'SUSPENDED';
   venue?: string;
