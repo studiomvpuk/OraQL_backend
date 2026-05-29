@@ -264,7 +264,7 @@ export class StreaksController {
     // Map teamId → leagueId
     const teamLeagueMap = new Map<string, string>();
     const allTeams = await this.prisma.team.findMany({ select: { id: true, leagueId: true } });
-    for (const t of allTeams) teamLeagueMap.set(t.id, t.leagueId);
+    for (const t of allTeams) if (t.leagueId) teamLeagueMap.set(t.id, t.leagueId);
 
     const streaksByLeague = new Map<string, number>();
     for (const s of streaksByTeam) {
