@@ -14,6 +14,14 @@ class TriggerIngestDto {
   days?: number;
 }
 
+class BackfillFixturesDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(180)
+  days?: number;
+}
+
 class BackfillPlayerDataDto {
   @IsOptional()
   @IsInt()
@@ -94,6 +102,74 @@ export class IngestController {
       this.logger.error(`Manual ingest failed: ${type}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Backfill historical fixtures day-by-day.
+   * POST /api/v1/ingest/backfill/fixtures
+   * Body: { days?: number } (default 60, max 180)
+   *
+   * Loops from (today - days) to today, calling ingestFixtures for each date.
+   * This populates enough match history per team for streak detection
+   * (need 3+ matches per team). Rate-limited to 30 req/min by the adapter.
+   *
+   * NOTE: This is a long-running request. 60 days ≈ 60 API calls ≈ 2-3 minutes.
+   */
+  @Post('backfill/fixtures')
+  @HttpCode(200)
+  async backfillFixtures(@Body() dto: BackfillFixturesDto) {
+    const days = dto.days || 60;
+    this.logger.log(`Backfilling fixtures for last ${days} days`);
+
+    let succeeded = 0;
+    let failed = 0;
+    let totalFixtures = 0;
+
+    for (let i = days; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+
+      try {
+        // Count events before ingest to track new additions
+        const beforeCount = await this.ingestService['prisma'].event.count();
+        await this.ingestService.ingestFixtures(date, 1);
+        const afterCount = await this.ingestService['prisma'].event.count();
+        const added = afterCount - beforeCount;
+        totalFixtures += added;
+        succeeded++;
+
+        if (succeeded % 10 === 0) {
+          this.logger.log(
+            `Backfill progress: ${succeeded}/${days + 1} days processed, ${totalFixtures} new fixtures`,
+          );
+        }
+      } catch (error) {
+        failed++;
+        this.logger.warn(`Failed to ingest fixtures for date ${date.toISOString().split('T')[0]}`, error);
+      }
+    }
+
+    // Count final totals
+    const totalEvents = await this.ingestService['prisma'].event.count();
+    const finishedEvents = await this.ingestService['prisma'].event.count({
+      where: { status: 'FINISHED' },
+    });
+
+    this.logger.log(
+      `Fixtures backfill complete: ${succeeded} days ok, ${failed} failed, ` +
+      `${totalFixtures} new fixtures. DB totals: ${totalEvents} events (${finishedEvents} finished)`,
+    );
+
+    return {
+      backfill: 'fixtures',
+      days,
+      daysSucceeded: succeeded,
+      daysFailed: failed,
+      newFixtures: totalFixtures,
+      totalEventsInDb: totalEvents,
+      finishedEventsInDb: finishedEvents,
+    };
   }
 
   /**
