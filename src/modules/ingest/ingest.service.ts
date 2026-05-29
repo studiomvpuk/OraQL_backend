@@ -660,6 +660,61 @@ export class IngestService {
   }
 
   // ==========================================================================
+  // HISTORICAL FIXTURES BACKFILL
+  // ==========================================================================
+
+  /**
+   * Backfill historical fixtures day-by-day.
+   * Called from the Bull queue processor (long-running).
+   */
+  async backfillHistoricalFixtures(days: number): Promise<{
+    daysSucceeded: number;
+    daysFailed: number;
+    totalEvents: number;
+    finishedEvents: number;
+  }> {
+    this.logger.log(`Starting historical fixtures backfill for ${days} days`);
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (let i = days; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+
+      try {
+        await this.ingestFixtures(date, 1);
+        succeeded++;
+
+        if (succeeded % 10 === 0) {
+          this.logger.log(
+            `Backfill progress: ${succeeded}/${days + 1} days processed`,
+          );
+        }
+      } catch (error) {
+        failed++;
+        this.logger.warn(
+          `Failed to ingest fixtures for ${date.toISOString().split('T')[0]}`,
+          error,
+        );
+      }
+    }
+
+    const totalEvents = await this.prisma.event.count();
+    const finishedEvents = await this.prisma.event.count({
+      where: { status: 'FINISHED' },
+    });
+
+    this.logger.log(
+      `Fixtures backfill complete: ${succeeded} days ok, ${failed} failed. ` +
+      `DB totals: ${totalEvents} events (${finishedEvents} finished)`,
+    );
+
+    return { daysSucceeded: succeeded, daysFailed: failed, totalEvents, finishedEvents };
+  }
+
+  // ==========================================================================
   // PHASE 2: TEAM-LEVEL MATCH STATS INGESTION (corners, cards, possession)
   // ==========================================================================
 

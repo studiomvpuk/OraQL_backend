@@ -1,5 +1,7 @@
 import { Controller, Post, Body, Logger, HttpCode } from '@nestjs/common';
 import { IsOptional, IsIn, IsInt, Min, Max } from 'class-validator';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { IngestService } from './ingest.service';
 
 class TriggerIngestDto {
@@ -53,7 +55,10 @@ class BackfillSeasonStatsDto {
 export class IngestController {
   private readonly logger = new Logger(IngestController.name);
 
-  constructor(private ingestService: IngestService) {}
+  constructor(
+    private ingestService: IngestService,
+    @InjectQueue('ingest') private ingestQueue: Queue,
+  ) {}
 
   /**
    * Manual trigger for data ingestion.
@@ -105,70 +110,34 @@ export class IngestController {
   }
 
   /**
-   * Backfill historical fixtures day-by-day.
+   * Backfill historical fixtures day-by-day (ASYNC — runs in background).
    * POST /api/v1/ingest/backfill/fixtures
    * Body: { days?: number } (default 60, max 180)
    *
-   * Loops from (today - days) to today, calling ingestFixtures for each date.
-   * This populates enough match history per team for streak detection
-   * (need 3+ matches per team). Rate-limited to 30 req/min by the adapter.
-   *
-   * NOTE: This is a long-running request. 60 days ≈ 60 API calls ≈ 2-3 minutes.
+   * Queues a background job that loops from (today - days) to today,
+   * calling ingestFixtures for each date. Returns immediately.
+   * Watch Railway deploy logs for progress.
    */
   @Post('backfill/fixtures')
-  @HttpCode(200)
+  @HttpCode(202)
   async backfillFixtures(@Body() dto: BackfillFixturesDto) {
     const days = dto.days || 60;
-    this.logger.log(`Backfilling fixtures for last ${days} days`);
+    this.logger.log(`Queuing fixtures backfill for last ${days} days`);
 
-    let succeeded = 0;
-    let failed = 0;
-    let totalFixtures = 0;
-
-    for (let i = days; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      date.setHours(0, 0, 0, 0);
-
-      try {
-        // Count events before ingest to track new additions
-        const beforeCount = await this.ingestService['prisma'].event.count();
-        await this.ingestService.ingestFixtures(date, 1);
-        const afterCount = await this.ingestService['prisma'].event.count();
-        const added = afterCount - beforeCount;
-        totalFixtures += added;
-        succeeded++;
-
-        if (succeeded % 10 === 0) {
-          this.logger.log(
-            `Backfill progress: ${succeeded}/${days + 1} days processed, ${totalFixtures} new fixtures`,
-          );
-        }
-      } catch (error) {
-        failed++;
-        this.logger.warn(`Failed to ingest fixtures for date ${date.toISOString().split('T')[0]}`, error);
-      }
-    }
-
-    // Count final totals
-    const totalEvents = await this.ingestService['prisma'].event.count();
-    const finishedEvents = await this.ingestService['prisma'].event.count({
-      where: { status: 'FINISHED' },
-    });
-
-    this.logger.log(
-      `Fixtures backfill complete: ${succeeded} days ok, ${failed} failed, ` +
-      `${totalFixtures} new fixtures. DB totals: ${totalEvents} events (${finishedEvents} finished)`,
+    const job = await this.ingestQueue.add(
+      'backfill-fixtures',
+      { days },
+      {
+        attempts: 1,
+        timeout: 30 * 60 * 1000, // 30 minute timeout
+      },
     );
 
     return {
-      backfill: 'fixtures',
+      status: 'queued',
+      jobId: job.id,
       days,
-      daysSucceeded: succeeded,
-      daysFailed: failed,
-      newFixtures: totalFixtures,
-      totalEventsInDb: totalEvents,
-      finishedEventsInDb: finishedEvents,
+      message: `Backfill job queued. Processing ${days} days of fixtures in background. Watch deploy logs for progress.`,
     };
   }
 

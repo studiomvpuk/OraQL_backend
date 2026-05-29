@@ -71,4 +71,20 @@ export class IngestProcessor {
       throw error;
     }
   }
+
+  @Process({ name: 'backfill-fixtures', concurrency: 1 })
+  async processBackfillFixtures(job: Job<{ days: number }>): Promise<void> {
+    const { days } = job.data;
+    this.logger.log(`Processing fixtures backfill for ${days} days`);
+    try {
+      const result = await this.ingestService.backfillHistoricalFixtures(days);
+      this.logger.log(
+        `Fixtures backfill completed: ${result.daysSucceeded} days ok, ` +
+        `${result.daysFailed} failed. Total: ${result.totalEvents} events (${result.finishedEvents} finished)`,
+      );
+    } catch (error) {
+      this.logger.error('Fixtures backfill failed', error);
+      throw error;
+    }
+  }
 }
