@@ -1,7 +1,5 @@
 import { Controller, Post, Body, Logger, HttpCode } from '@nestjs/common';
 import { IsOptional, IsIn, IsInt, Min, Max } from 'class-validator';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
 import { IngestService } from './ingest.service';
 
 class TriggerIngestDto {
@@ -55,10 +53,7 @@ class BackfillSeasonStatsDto {
 export class IngestController {
   private readonly logger = new Logger(IngestController.name);
 
-  constructor(
-    private ingestService: IngestService,
-    @InjectQueue('ingest') private ingestQueue: Queue,
-  ) {}
+  constructor(private ingestService: IngestService) {}
 
   /**
    * Manual trigger for data ingestion.
@@ -110,34 +105,34 @@ export class IngestController {
   }
 
   /**
-   * Backfill historical fixtures day-by-day (ASYNC — runs in background).
+   * Backfill historical fixtures day-by-day (fire-and-forget).
    * POST /api/v1/ingest/backfill/fixtures
    * Body: { days?: number } (default 60, max 180)
    *
-   * Queues a background job that loops from (today - days) to today,
-   * calling ingestFixtures for each date. Returns immediately.
-   * Watch Railway deploy logs for progress.
+   * Returns 202 immediately. The actual work runs in the background
+   * via a non-awaited promise. Watch Railway deploy logs for progress.
    */
   @Post('backfill/fixtures')
   @HttpCode(202)
   async backfillFixtures(@Body() dto: BackfillFixturesDto) {
     const days = dto.days || 60;
-    this.logger.log(`Queuing fixtures backfill for last ${days} days`);
+    this.logger.log(`Starting fixtures backfill for last ${days} days (fire-and-forget)`);
 
-    const job = await this.ingestQueue.add(
-      'backfill-fixtures',
-      { days },
-      {
-        attempts: 1,
-        timeout: 30 * 60 * 1000, // 30 minute timeout
-      },
-    );
+    // Fire and forget — runs in background, HTTP response returns immediately
+    this.ingestService
+      .backfillHistoricalFixtures(days)
+      .then((result) =>
+        this.logger.log(
+          `Fixtures backfill DONE: ${result.daysSucceeded} days ok, ${result.daysFailed} failed. ` +
+          `DB: ${result.totalEvents} events (${result.finishedEvents} finished)`,
+        ),
+      )
+      .catch((err) => this.logger.error('Fixtures backfill FAILED', err));
 
     return {
-      status: 'queued',
-      jobId: job.id,
+      status: 'started',
       days,
-      message: `Backfill job queued. Processing ${days} days of fixtures in background. Watch deploy logs for progress.`,
+      message: `Backfill started for ${days} days. Watch deploy logs for progress.`,
     };
   }
 
