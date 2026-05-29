@@ -17,9 +17,10 @@ import { PrismaService } from '../prisma/prisma.service';
 export class StreaksController {
   private readonly logger = new Logger(StreaksController.name);
 
-  /** Simple in-memory cache for stats (changes only when detection cron runs) */
+  /** Simple in-memory caches (streak/league data changes only when cron runs) */
   private statsCache: { data: any; timestamp: number } | null = null;
-  private readonly STATS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private leagueCache: { data: any; timestamp: number } | null = null;
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(
     private streakDetectionService: StreakDetectionService,
@@ -43,6 +44,29 @@ export class StreaksController {
     );
 
     return { streaks: scored, total: scored.length };
+  }
+
+  /**
+   * GET /api/v1/streaks/leagues
+   * All leagues that have teams in the system.
+   * Used by the frontend league filter. Cached for 5 minutes.
+   */
+  @Get('leagues')
+  async getLeagues() {
+    const now = Date.now();
+    if (this.leagueCache && now - this.leagueCache.timestamp < this.CACHE_TTL_MS) {
+      return this.leagueCache.data;
+    }
+
+    const leagues = await this.prisma.league.findMany({
+      where: { teams: { some: {} } },
+      select: { id: true, name: true, country: true, logoUrl: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const data = { leagues, total: leagues.length };
+    this.leagueCache = { data, timestamp: now };
+    return data;
   }
 
   /**
@@ -198,7 +222,7 @@ export class StreaksController {
   async getStreakStats() {
     // Serve cached stats if fresh
     const now = Date.now();
-    if (this.statsCache && now - this.statsCache.timestamp < this.STATS_CACHE_TTL_MS) {
+    if (this.statsCache && now - this.statsCache.timestamp < this.CACHE_TTL_MS) {
       return this.statsCache.data;
     }
 
