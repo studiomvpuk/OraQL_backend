@@ -312,8 +312,7 @@ export class IngestController {
           status: 'FINISHED',
           OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }],
         },
-        _count: true,
-        orderBy: { _count: { _all: 'desc' } },
+        _count: { _all: true },
       });
 
       if (leagueCounts.length === 0) {
@@ -321,7 +320,8 @@ export class IngestController {
         continue;
       }
 
-      // The league with the most events is the team's primary league
+      // Sort by count descending to find the primary league
+      leagueCounts.sort((a, b) => b._count._all - a._count._all);
       const primaryLeagueId = leagueCounts[0].leagueId;
 
       if (primaryLeagueId !== team.leagueId) {
