@@ -165,6 +165,8 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async getCurrentUser(@CurrentUser() user: any) {
-    return { user };
+    // Fetch full user from DB (JWT payload only has sub/email/role)
+    const fullUser = await this.authService.getUserById(user.sub);
+    return { user: fullUser };
   }
 }

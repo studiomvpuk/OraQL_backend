@@ -17,7 +17,7 @@ import { LocalStrategy } from './strategies/local.strategy';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET', 'your-secret-key'),
-        signOptions: { expiresIn: '15m' },
+        signOptions: { expiresIn: '365d' },
       }),
     }),
     PrismaModule,

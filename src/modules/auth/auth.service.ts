@@ -509,15 +509,21 @@ export class AuthService {
     const payload = { sub: userId, email, role };
 
     const accessToken = this.jwtService.sign(payload, {
-      expiresIn: '15m',
+      expiresIn: '365d',
     });
 
     const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: '30d',
+      expiresIn: '365d',
       secret: this.configService.get<string>('JWT_REFRESH_SECRET', 'your-refresh-secret-key'),
     });
 
     return { accessToken, refreshToken };
+  }
+
+  async getUserById(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return null;
+    return this.sanitizeUser(user);
   }
 
   private sanitizeUser(user: any) {
