@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Logger, HttpCode } from '@nestjs/common';
 import { IsOptional, IsIn, IsInt, Min, Max } from 'class-validator';
 import { IngestService } from './ingest.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 class TriggerIngestDto {
   @IsOptional()
@@ -53,7 +54,10 @@ class BackfillSeasonStatsDto {
 export class IngestController {
   private readonly logger = new Logger(IngestController.name);
 
-  constructor(private ingestService: IngestService) {}
+  constructor(
+    private ingestService: IngestService,
+    private prisma: PrismaService,
+  ) {}
 
   /**
    * Manual trigger for data ingestion.
@@ -279,6 +283,64 @@ export class IngestController {
       totalTeams: teams.length,
       succeeded,
       failed,
+    };
+  }
+
+  /**
+   * POST /api/v1/ingest/fix-team-leagues
+   * One-time repair: assign each team to the league where they have
+   * the most finished events. Fixes teams stuck under cups/friendlies.
+   */
+  @Post('fix-team-leagues')
+  @HttpCode(200)
+  async fixTeamLeagues() {
+    this.logger.log('Starting team league repair');
+
+    // For every team, find which league has the most events for them
+    const teams = await this.prisma.team.findMany({
+      select: { id: true, name: true, leagueId: true },
+    });
+
+    let fixed = 0;
+    let skipped = 0;
+
+    for (const team of teams) {
+      // Count events per league for this team
+      const leagueCounts = await this.prisma.event.groupBy({
+        by: ['leagueId'],
+        where: {
+          status: 'FINISHED',
+          OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }],
+        },
+        _count: true,
+        orderBy: { _count: { _all: 'desc' } },
+      });
+
+      if (leagueCounts.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      // The league with the most events is the team's primary league
+      const primaryLeagueId = leagueCounts[0].leagueId;
+
+      if (primaryLeagueId !== team.leagueId) {
+        await this.prisma.team.update({
+          where: { id: team.id },
+          data: { leagueId: primaryLeagueId },
+        });
+        fixed++;
+      } else {
+        skipped++;
+      }
+    }
+
+    this.logger.log(`Team league repair done: ${fixed} fixed, ${skipped} unchanged`);
+
+    return {
+      totalTeams: teams.length,
+      fixed,
+      unchanged: skipped,
     };
   }
 }
