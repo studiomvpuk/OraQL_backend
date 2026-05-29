@@ -377,6 +377,327 @@ export class IngestService {
     }
   }
 
+  // ==========================================================================
+  // PHASE 1: PLAYER-LEVEL DATA INGESTION
+  // ==========================================================================
+
+  /**
+   * Daily ingest of player match data for recently finished events (5 AM).
+   * Runs after fixture ingestion so new events exist in DB.
+   */
+  @Cron('0 5 * * *')
+  async ingestDailyPlayerData(): Promise<void> {
+    this.logger.log('Starting daily player data ingestion');
+    try {
+      await this.ingestQueue.add(
+        'player-data-ingest',
+        {},
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 3000 },
+        },
+      );
+    } catch (error) {
+      this.logger.error('Failed to queue player data ingest job', error);
+    }
+  }
+
+  /**
+   * Ingest player events + stats for all recently finished events
+   * that don't already have player data.
+   */
+  async ingestPlayerDataForRecentEvents(): Promise<void> {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+
+    // Find finished events from the last 48 hours that have no player events yet
+    const finishedEvents = await this.prisma.event.findMany({
+      where: {
+        status: 'FINISHED',
+        kickoffAt: { gte: yesterday },
+        playerEvents: { none: {} },
+      },
+      include: {
+        homeTeam: true,
+        awayTeam: true,
+      },
+      take: 50, // batch size to avoid rate limits
+    });
+
+    this.logger.log(
+      `Ingesting player data for ${finishedEvents.length} finished events`,
+    );
+
+    for (const event of finishedEvents) {
+      try {
+        await this.ingestPlayerDataForEvent(event.id, event.externalId, event);
+        await this.createIngestJob('PLAYER_DATA_INGEST', event.externalId, 'COMPLETED');
+      } catch (error) {
+        this.logger.warn(
+          `Failed to ingest player data for event ${event.id}`,
+          error,
+        );
+        await this.createIngestJob('PLAYER_DATA_INGEST', event.externalId, 'FAILED', error);
+      }
+    }
+  }
+
+  /**
+   * Ingest player events (goals, cards, subs) and per-player match stats
+   * for a single event.
+   */
+  async ingestPlayerDataForEvent(
+    eventId: string,
+    fixtureExternalId: string,
+    event?: any,
+  ): Promise<void> {
+    if (!event) {
+      event = await this.prisma.event.findUnique({
+        where: { id: eventId },
+        include: { homeTeam: true, awayTeam: true },
+      });
+    }
+    if (!event) throw new Error(`Event ${eventId} not found`);
+
+    // Build a lookup: externalId → internal team id
+    const teamLookup: Record<string, string> = {
+      [event.homeTeam.externalId]: event.homeTeam.id,
+      [event.awayTeam.externalId]: event.awayTeam.id,
+    };
+
+    // --- 1. Fixture events (goals, cards, subs) ---
+    if (this.apiFootballAdapter.getFixtureEvents) {
+      const events = await this.apiFootballAdapter.getFixtureEvents(fixtureExternalId);
+
+      for (const evt of events) {
+        const teamId = teamLookup[evt.teamExternalId];
+        if (!teamId) continue;
+
+        // Resolve player (must exist in our DB)
+        const player = await this.prisma.player.findUnique({
+          where: { externalId: evt.playerExternalId },
+        });
+        if (!player) {
+          // Auto-create placeholder player
+          const newPlayer = await this.prisma.player.create({
+            data: {
+              externalId: evt.playerExternalId,
+              name: `Player ${evt.playerExternalId}`,
+              teamId,
+            },
+          });
+          await this.upsertPlayerMatchEvent(eventId, newPlayer.id, teamId, evt);
+        } else {
+          await this.upsertPlayerMatchEvent(eventId, player.id, teamId, evt);
+        }
+      }
+
+      this.logger.debug(
+        `Ingested ${events.length} player events for fixture ${fixtureExternalId}`,
+      );
+    }
+
+    // --- 2. Per-player match stats (SoT, crosses, tackles, rating) ---
+    if (this.apiFootballAdapter.getFixturePlayerStats) {
+      const playerStats = await this.apiFootballAdapter.getFixturePlayerStats(fixtureExternalId);
+
+      for (const ps of playerStats) {
+        const teamId = teamLookup[ps.teamExternalId];
+        if (!teamId) continue;
+
+        let player = await this.prisma.player.findUnique({
+          where: { externalId: ps.playerExternalId },
+        });
+
+        if (!player) {
+          player = await this.prisma.player.create({
+            data: {
+              externalId: ps.playerExternalId,
+              name: `Player ${ps.playerExternalId}`,
+              teamId,
+            },
+          });
+        }
+
+        await this.prisma.playerMatchStats.upsert({
+          where: {
+            eventId_playerId: {
+              eventId,
+              playerId: player.id,
+            },
+          },
+          update: {
+            minutesPlayed: ps.minutesPlayed,
+            shotsTotal: ps.shotsTotal,
+            shotsOnTarget: ps.shotsOnTarget,
+            passes: ps.passes,
+            passAccuracy: ps.passAccuracy,
+            tackles: ps.tackles,
+            duels: ps.duels,
+            duelsWon: ps.duelsWon,
+            dribbles: ps.dribbles,
+            foulsCommitted: ps.foulsCommitted,
+            foulsDrawn: ps.foulsDrawn,
+            crosses: ps.crosses,
+            rating: ps.rating,
+          },
+          create: {
+            eventId,
+            playerId: player.id,
+            teamId,
+            minutesPlayed: ps.minutesPlayed,
+            shotsTotal: ps.shotsTotal,
+            shotsOnTarget: ps.shotsOnTarget,
+            passes: ps.passes,
+            passAccuracy: ps.passAccuracy,
+            tackles: ps.tackles,
+            duels: ps.duels,
+            duelsWon: ps.duelsWon,
+            dribbles: ps.dribbles,
+            foulsCommitted: ps.foulsCommitted,
+            foulsDrawn: ps.foulsDrawn,
+            crosses: ps.crosses,
+            rating: ps.rating,
+          },
+        });
+      }
+
+      this.logger.debug(
+        `Ingested ${playerStats.length} player match stats for fixture ${fixtureExternalId}`,
+      );
+    }
+  }
+
+  /**
+   * Ingest season-level stats for all players on a given team.
+   * Called per-team; batches API calls to respect rate limits.
+   */
+  async ingestPlayerSeasonStats(
+    teamId: string,
+    season: string,
+  ): Promise<void> {
+    if (!this.apiFootballAdapter.getPlayerSeasonStats) return;
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      include: { players: true, league: true },
+    });
+
+    if (!team || !team.league) {
+      this.logger.warn(`Team ${teamId} or its league not found — skipping season stats`);
+      return;
+    }
+
+    this.logger.log(
+      `Ingesting season stats for ${team.players.length} players on ${team.name}`,
+    );
+
+    for (const player of team.players) {
+      try {
+        const seasonStats = await this.apiFootballAdapter.getPlayerSeasonStats(
+          player.externalId,
+          season,
+        );
+
+        for (const ss of seasonStats) {
+          // Resolve league
+          const league = await this.prisma.league.findUnique({
+            where: { externalId: ss.leagueExternalId },
+          });
+          if (!league) continue;
+
+          await this.prisma.playerSeasonStats.upsert({
+            where: {
+              playerId_season_leagueId: {
+                playerId: player.id,
+                season: ss.season,
+                leagueId: league.id,
+              },
+            },
+            update: {
+              appearances: ss.appearances,
+              goals: ss.goals,
+              assists: ss.assists,
+              yellowCards: ss.yellowCards,
+              redCards: ss.redCards,
+              minutesPlayed: ss.minutesPlayed,
+              shotsTotal: ss.shotsTotal,
+              shotsOnTarget: ss.shotsOnTarget,
+              passAccuracy: ss.passAccuracy,
+              crosses: ss.crosses,
+              rating: ss.rating,
+            },
+            create: {
+              playerId: player.id,
+              teamId: team.id,
+              season: ss.season,
+              leagueId: league.id,
+              appearances: ss.appearances,
+              goals: ss.goals,
+              assists: ss.assists,
+              yellowCards: ss.yellowCards,
+              redCards: ss.redCards,
+              minutesPlayed: ss.minutesPlayed,
+              shotsTotal: ss.shotsTotal,
+              shotsOnTarget: ss.shotsOnTarget,
+              passAccuracy: ss.passAccuracy,
+              crosses: ss.crosses,
+              rating: ss.rating,
+            },
+          });
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to ingest season stats for player ${player.id}`,
+          error,
+        );
+        // Continue with other players
+      }
+    }
+
+    await this.createIngestJob('PLAYER_SEASON_STATS', teamId, 'COMPLETED');
+  }
+
+  // ==========================================================================
+  // PRIVATE HELPERS
+  // ==========================================================================
+
+  private async upsertPlayerMatchEvent(
+    eventId: string,
+    playerId: string,
+    teamId: string,
+    evt: { type: string; minute: number; detail?: string },
+  ): Promise<void> {
+    const type = evt.type as any;
+    try {
+      await this.prisma.playerMatchEvent.upsert({
+        where: {
+          eventId_playerId_type_minute: {
+            eventId,
+            playerId,
+            type,
+            minute: evt.minute,
+          },
+        },
+        update: { detail: evt.detail },
+        create: {
+          eventId,
+          playerId,
+          teamId,
+          type,
+          minute: evt.minute,
+          detail: evt.detail,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to upsert player event: ${playerId} ${type} @ ${evt.minute}'`,
+        error,
+      );
+    }
+  }
+
   /**
    * Create ingest job tracking record
    */

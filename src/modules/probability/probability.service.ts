@@ -1,6 +1,7 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExplanationService } from './explanation.service';
+import { StreakAnalysisService, StreakPickSuggestion } from '../streaks/streak-analysis.service';
 
 interface TeamStats {
   avgGoalsScored: number;
@@ -32,6 +33,7 @@ export class ProbabilityService {
   constructor(
     private prisma: PrismaService,
     private explanationService: ExplanationService,
+    @Optional() private streakAnalysisService?: StreakAnalysisService,
   ) {}
 
   /**
@@ -119,7 +121,25 @@ export class ProbabilityService {
       // BTTS
       markets.push(this.computeBTTS(homeHistory, awayHistory, homeInjuryFactor, awayInjuryFactor));
 
-      // Post-process: blend with bookmaker odds + add per-market variance
+      // Fetch streak suggestions for this event (if streak service available)
+      let streakSuggestions: StreakPickSuggestion[] = [];
+      const streakMap = new Map<string, StreakPickSuggestion>();
+      if (this.streakAnalysisService) {
+        try {
+          streakSuggestions = await this.streakAnalysisService.getStreakSuggestionsForEvent(eventId);
+          for (const s of streakSuggestions) {
+            const key = `${s.marketName}|${s.line ?? ''}`;
+            // Keep the best streak per market
+            if (!streakMap.has(key) || s.confidence > (streakMap.get(key)?.confidence ?? 0)) {
+              streakMap.set(key, s);
+            }
+          }
+        } catch (err) {
+          this.logger.warn('Failed to fetch streak suggestions, proceeding without', err);
+        }
+      }
+
+      // Post-process: blend with bookmaker odds + add per-market variance + streak boost
       for (const result of markets) {
         const oddsKey = this.marketToOddsKey(result.market, result.line);
         const bookmakerProb = oddsLookup.get(oddsKey);
@@ -140,6 +160,15 @@ export class ProbabilityService {
           const variance = (marketSeed - 0.5) * 0.35; // ±17.5% swing
           result.probability = result.probability * (1 + variance);
           result.confidence = Math.max(0.5, result.confidence - 0.15);
+        }
+
+        // Streak boost: if an active streak applies to this market, boost probability
+        const streakKey = `${result.market}|${result.line ?? ''}`;
+        const matchingStreak = streakMap.get(streakKey);
+        if (matchingStreak && matchingStreak.streakBoost > 0) {
+          result.probability += matchingStreak.streakBoost;
+          result.confidence = Math.min(0.95, result.confidence + 0.03);
+          result.explanation += ` | Streak detected: ${matchingStreak.summary}`;
         }
 
         // Final clamp: [0.05, 0.92] — nothing should look like a "sure thing"
@@ -171,6 +200,10 @@ export class ProbabilityService {
           isValueBet = valueGap >= 0.10; // 10%+ gap = value bet
         }
 
+        // Attach streak reference if applicable
+        const streakRefKey = `${result.market}|${result.line ?? ''}`;
+        const streakRef = streakMap.get(streakRefKey);
+
         const marketData = {
           probability: result.probability,
           confidence: result.confidence,
@@ -179,6 +212,10 @@ export class ProbabilityService {
           valueGap,
           isValueBet,
           probabilityUpdatedAt: new Date(),
+          ...(streakRef && {
+            streakId: streakRef.streakId,
+            streakSummary: streakRef.summary,
+          }),
         };
 
         if (existing) {

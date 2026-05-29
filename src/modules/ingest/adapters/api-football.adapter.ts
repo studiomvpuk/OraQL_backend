@@ -9,6 +9,9 @@ import {
   PlayerData,
   LineupData,
   InjuryData,
+  FixtureEventData,
+  PlayerMatchStatsData,
+  PlayerSeasonStatsData,
 } from '../interfaces/data-provider.interface';
 
 interface ApiFootballResponse<T> {
@@ -327,6 +330,212 @@ export class ApiFootballAdapter implements IDataProvider {
         : undefined,
       nationality: item.player.nationality,
     }));
+  }
+
+  // ==========================================================================
+  // PHASE 1: PLAYER-LEVEL DATA METHODS
+  // ==========================================================================
+
+  /**
+   * Get match events (goals, cards, substitutions) for a fixture.
+   * API-Football endpoint: GET /fixtures/events?fixture={id}
+   */
+  async getFixtureEvents(fixtureExternalId: string): Promise<FixtureEventData[]> {
+    const data = await this.makeRequest<any>('fixtures/events', {
+      fixture: fixtureExternalId,
+    });
+
+    const eventTypeMap: Record<string, FixtureEventData['type']> = {
+      Goal: 'GOAL',
+      Card: 'YELLOW_CARD', // refined below based on detail
+      subst: 'SUBSTITUTION_IN',
+    };
+
+    return data
+      .filter((evt: any) => evt.player?.id)
+      .flatMap((evt: any) => {
+        const results: FixtureEventData[] = [];
+        const baseType = eventTypeMap[evt.type] || null;
+        if (!baseType) return results;
+
+        const teamExtId = String(evt.team.id);
+        const playerExtId = String(evt.player.id);
+        const minute = evt.time?.elapsed || 0;
+        const detail = evt.detail || '';
+
+        if (evt.type === 'Goal') {
+          if (detail === 'Own Goal') {
+            results.push({
+              playerExternalId: playerExtId,
+              teamExternalId: teamExtId,
+              type: 'OWN_GOAL',
+              minute,
+              detail,
+            });
+          } else if (detail === 'Penalty') {
+            results.push({
+              playerExternalId: playerExtId,
+              teamExternalId: teamExtId,
+              type: 'PENALTY_SCORED',
+              minute,
+              detail,
+            });
+          } else if (detail === 'Missed Penalty') {
+            results.push({
+              playerExternalId: playerExtId,
+              teamExternalId: teamExtId,
+              type: 'PENALTY_MISSED',
+              minute,
+              detail,
+            });
+          } else {
+            results.push({
+              playerExternalId: playerExtId,
+              teamExternalId: teamExtId,
+              type: 'GOAL',
+              minute,
+              detail,
+            });
+          }
+          // Assist (if present)
+          if (evt.assist?.id) {
+            results.push({
+              playerExternalId: String(evt.assist.id),
+              teamExternalId: teamExtId,
+              type: 'ASSIST',
+              minute,
+              detail: `Assist for ${evt.player.name}`,
+            });
+          }
+        } else if (evt.type === 'Card') {
+          results.push({
+            playerExternalId: playerExtId,
+            teamExternalId: teamExtId,
+            type: detail === 'Red Card' || detail === 'Second Yellow card' ? 'RED_CARD' : 'YELLOW_CARD',
+            minute,
+            detail,
+          });
+        } else if (evt.type === 'subst') {
+          // Player coming in
+          results.push({
+            playerExternalId: playerExtId,
+            teamExternalId: teamExtId,
+            type: 'SUBSTITUTION_IN',
+            minute,
+            detail,
+          });
+          // Player going out (assist field holds the subbed-out player)
+          if (evt.assist?.id) {
+            results.push({
+              playerExternalId: String(evt.assist.id),
+              teamExternalId: teamExtId,
+              type: 'SUBSTITUTION_OUT',
+              minute,
+              detail,
+            });
+          }
+        }
+
+        return results;
+      });
+  }
+
+  /**
+   * Get per-player match statistics for a fixture.
+   * API-Football endpoint: GET /fixtures/players?fixture={id}
+   */
+  async getFixturePlayerStats(fixtureExternalId: string): Promise<PlayerMatchStatsData[]> {
+    const data = await this.makeRequest<any>('fixtures/players', {
+      fixture: fixtureExternalId,
+    });
+
+    const results: PlayerMatchStatsData[] = [];
+
+    for (const teamBlock of data) {
+      const teamExtId = String(teamBlock.team.id);
+
+      for (const playerEntry of teamBlock.players || []) {
+        const stats = playerEntry.statistics?.[0];
+        if (!stats || !playerEntry.player?.id) continue;
+
+        const minutesStr = stats.games?.minutes;
+        const minutesPlayed = minutesStr ? parseInt(String(minutesStr), 10) : 0;
+        if (minutesPlayed === 0) continue; // skip players who didn't feature
+
+        results.push({
+          playerExternalId: String(playerEntry.player.id),
+          teamExternalId: teamExtId,
+          minutesPlayed,
+          shotsTotal: this.safeInt(stats.shots?.total),
+          shotsOnTarget: this.safeInt(stats.shots?.on),
+          passes: this.safeInt(stats.passes?.total),
+          passAccuracy: stats.passes?.accuracy ? parseFloat(stats.passes.accuracy) : undefined,
+          tackles: this.safeInt(stats.tackles?.total),
+          duels: this.safeInt(stats.duels?.total),
+          duelsWon: this.safeInt(stats.duels?.won),
+          dribbles: this.safeInt(stats.dribbles?.attempts),
+          foulsCommitted: this.safeInt(stats.fouls?.committed),
+          foulsDrawn: this.safeInt(stats.fouls?.drawn),
+          crosses: this.safeInt(stats.passes?.cross),
+          rating: stats.games?.rating ? parseFloat(stats.games.rating) : undefined,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Get a player's season-level aggregated stats.
+   * API-Football endpoint: GET /players?id={id}&season={season}
+   * Returns one entry per league the player appeared in.
+   */
+  async getPlayerSeasonStats(
+    playerExternalId: string,
+    season: string,
+  ): Promise<PlayerSeasonStatsData[]> {
+    const data = await this.makeRequest<any>('players', {
+      id: playerExternalId,
+      season,
+    });
+
+    const results: PlayerSeasonStatsData[] = [];
+
+    for (const item of data) {
+      for (const stat of item.statistics || []) {
+        if (!stat.league?.id || !stat.team?.id) continue;
+
+        results.push({
+          playerExternalId: String(item.player.id),
+          teamExternalId: String(stat.team.id),
+          leagueExternalId: String(stat.league.id),
+          season: String(stat.league.season),
+          appearances: this.safeInt(stat.games?.appearences) || 0, // API typo: "appearences"
+          goals: this.safeInt(stat.goals?.total) || 0,
+          assists: this.safeInt(stat.goals?.assists) || 0,
+          yellowCards: this.safeInt(stat.cards?.yellow) || 0,
+          redCards: this.safeInt(stat.cards?.red) || 0,
+          minutesPlayed: this.safeInt(stat.games?.minutes) || 0,
+          shotsTotal: this.safeInt(stat.shots?.total),
+          shotsOnTarget: this.safeInt(stat.shots?.on),
+          passAccuracy: stat.passes?.accuracy ? parseFloat(String(stat.passes.accuracy)) : undefined,
+          crosses: this.safeInt(stat.passes?.cross),
+          rating: stat.games?.rating ? parseFloat(String(stat.games.rating)) : undefined,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  // ==========================================================================
+  // PRIVATE HELPERS
+  // ==========================================================================
+
+  private safeInt(value: any): number | undefined {
+    if (value === null || value === undefined) return undefined;
+    const parsed = parseInt(String(value), 10);
+    return isNaN(parsed) ? undefined : parsed;
   }
 
   private mapInjurySeverity(

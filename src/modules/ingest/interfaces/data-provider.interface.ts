@@ -93,6 +93,54 @@ export interface OddsData {
   impliedProbability: number;
 }
 
+// ============================================================================
+// PHASE 1: PLAYER-LEVEL DATA INTERFACES
+// ============================================================================
+
+export interface FixtureEventData {
+  playerExternalId: string;
+  teamExternalId: string;
+  type: 'GOAL' | 'ASSIST' | 'YELLOW_CARD' | 'RED_CARD' | 'SUBSTITUTION_IN' | 'SUBSTITUTION_OUT' | 'PENALTY_SCORED' | 'PENALTY_MISSED' | 'OWN_GOAL';
+  minute: number;
+  detail?: string;
+}
+
+export interface PlayerMatchStatsData {
+  playerExternalId: string;
+  teamExternalId: string;
+  minutesPlayed: number;
+  shotsTotal?: number;
+  shotsOnTarget?: number;
+  passes?: number;
+  passAccuracy?: number;
+  tackles?: number;
+  duels?: number;
+  duelsWon?: number;
+  dribbles?: number;
+  foulsCommitted?: number;
+  foulsDrawn?: number;
+  crosses?: number;
+  rating?: number;
+}
+
+export interface PlayerSeasonStatsData {
+  playerExternalId: string;
+  teamExternalId: string;
+  leagueExternalId: string;
+  season: string;
+  appearances: number;
+  goals: number;
+  assists: number;
+  yellowCards: number;
+  redCards: number;
+  minutesPlayed: number;
+  shotsTotal?: number;
+  shotsOnTarget?: number;
+  passAccuracy?: number;
+  crosses?: number;
+  rating?: number;
+}
+
 export interface IDataProvider {
   /**
    * Get fixtures for a specific date, optionally filtered by leagues
@@ -133,4 +181,19 @@ export interface IDataProvider {
    * Get odds for a fixture (optional - only implemented by odds providers)
    */
   getOdds?(fixtureExternalId: string): Promise<OddsData[]>;
+
+  /**
+   * Get match events (goals, cards, subs) for a fixture
+   */
+  getFixtureEvents?(fixtureExternalId: string): Promise<FixtureEventData[]>;
+
+  /**
+   * Get per-player match statistics for a fixture
+   */
+  getFixturePlayerStats?(fixtureExternalId: string): Promise<PlayerMatchStatsData[]>;
+
+  /**
+   * Get a player's season-level aggregated stats
+   */
+  getPlayerSeasonStats?(playerExternalId: string, season: string): Promise<PlayerSeasonStatsData[]>;
 }

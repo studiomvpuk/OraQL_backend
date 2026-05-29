@@ -1,9 +1,15 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Optional, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CrossLeagueService, SuggestedTicket } from '../streaks/cross-league.service';
 
 @Injectable()
 export class BuilderService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(BuilderService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    @Optional() private crossLeagueService?: CrossLeagueService,
+  ) {}
 
   async getSelections(userId: string) {
     const selections = await this.prisma.builderSelection.findMany({
@@ -18,6 +24,7 @@ export class BuilderService {
                 league: true,
               },
             },
+            streak: true,
           },
         },
       },
@@ -32,11 +39,67 @@ export class BuilderService {
         ? probabilities.reduce((acc: number, p: number) => acc * p, 1)
         : 1;
 
+    // Count how many selections have streak backing
+    const streakBackedCount = selections.filter(
+      (s: any) => s.market?.streakId != null,
+    ).length;
+
+    // Unique leagues in the builder
+    const uniqueLeagues = new Set(
+      selections.map((s: any) => s.market?.event?.league?.name).filter(Boolean),
+    ).size;
+
     return {
       selections,
       count: selections.length,
       combinedProbability,
+      streakBackedCount,
+      uniqueLeagues,
     };
+  }
+
+  /**
+   * Get AI-suggested multi-leg tickets based on active streaks
+   * across all upcoming events and leagues.
+   */
+  async getSuggestedTickets(filters?: {
+    maxLegs?: number;
+    minLegs?: number;
+    limit?: number;
+    leagueIds?: string[];
+  }): Promise<SuggestedTicket[]> {
+    if (!this.crossLeagueService) {
+      return [];
+    }
+
+    try {
+      return await this.crossLeagueService.generateSuggestedTickets(filters);
+    } catch (error) {
+      this.logger.warn('Failed to generate ticket suggestions', error);
+      return [];
+    }
+  }
+
+  /**
+   * Auto-populate the builder with a suggested ticket's legs.
+   */
+  async applySuggestedTicket(
+    userId: string,
+    legs: Array<{ marketId: string }>,
+  ) {
+    // Clear existing selections
+    await this.clearSelections(userId);
+
+    // Add each leg
+    for (const leg of legs) {
+      try {
+        await this.addSelection(userId, leg.marketId);
+      } catch {
+        // Skip invalid/conflicting legs
+      }
+    }
+
+    return this.getSelections(userId);
   }
 
   async addSelection(userId: string, marketId: string) {
@@ -131,6 +194,9 @@ export class BuilderService {
       if (league) lines.push(`   ${league}`);
       lines.push(`   Pick: ${pick}`);
       lines.push(`   Probability: ${prob}%`);
+      if (sel.market.streakSummary) {
+        lines.push(`   Streak: ${sel.market.streakSummary}`);
+      }
       lines.push('');
     });
 

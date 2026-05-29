@@ -63,6 +63,31 @@ enum IngestJobStatus {
   FAILED
 }
 
+enum PlayerEventType {
+  GOAL
+  ASSIST
+  YELLOW_CARD
+  RED_CARD
+  SUBSTITUTION_IN
+  SUBSTITUTION_OUT
+  PENALTY_SCORED
+  PENALTY_MISSED
+  OWN_GOAL
+}
+
+enum VenueFilter {
+  HOME
+  AWAY
+  ALL
+}
+
+enum ValidationLevel {
+  HIGH
+  MEDIUM
+  LOW
+  UNKNOWN
+}
+
 // ============================================================================
 // MODELS
 // ============================================================================
@@ -125,6 +150,7 @@ model League {
 
   events    Event[]
   teams     Team[]
+  playerSeasonStats PlayerSeasonStats[]
 }
 
 model Team {
@@ -144,6 +170,10 @@ model Team {
   players   Player[]
   matchStats MatchStats[]
   lineups   Lineup[]
+  playerEvents PlayerMatchEvent[]
+  playerMatchStats PlayerMatchStats[]
+  playerSeasonStats PlayerSeasonStats[]
+  streaks   Streak[]
 }
 
 model Player {
@@ -162,6 +192,9 @@ model Player {
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   injuries  PlayerInjury[]
   lineupEntries LineupEntry[]
+  matchEvents PlayerMatchEvent[]
+  matchPlayerStats PlayerMatchStats[]
+  seasonStats PlayerSeasonStats[]
 }
 
 model Event {
@@ -190,6 +223,8 @@ model Event {
   lineups   Lineup[]
   matchStats MatchStats[]
   bookmakerOdds BookmakerOdds[]
+  playerEvents PlayerMatchEvent[]
+  playerStats PlayerMatchStats[]
 
   @@index([kickoffAt])
   @@index([sport, status])
@@ -283,10 +318,13 @@ model Market {
   explanationFactors Json?
   probabilityUpdatedAt DateTime?
   isActive  Boolean  @default(true)
+  streakId  String?
+  streakSummary String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  streak    Streak?  @relation(fields: [streakId], references: [id], onDelete: SetNull)
   picks     Pick[]
   builderSelections BuilderSelection[]
 
@@ -301,6 +339,7 @@ model Pick {
   probability Float
   confidence Float
   explanation String? @db.Text
+  streakBoost Float?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -356,4 +395,131 @@ model IngestJob {
   eventsProcessed Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ============================================================================
+// PHASE 1: PLAYER-LEVEL DATA
+// ============================================================================
+
+model PlayerMatchEvent {
+  id        String   @id @default(cuid())
+  eventId   String
+  playerId  String
+  teamId    String
+  type      PlayerEventType
+  minute    Int
+  detail    String?
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, playerId, type, minute])
+  @@index([eventId])
+  @@index([playerId])
+  @@index([teamId, type])
+}
+
+model PlayerMatchStats {
+  id             String   @id @default(cuid())
+  eventId        String
+  playerId       String
+  teamId         String
+  minutesPlayed  Int      @default(0)
+  shotsTotal     Int?
+  shotsOnTarget  Int?
+  passes         Int?
+  passAccuracy   Float?
+  tackles        Int?
+  duels          Int?
+  duelsWon       Int?
+  dribbles       Int?
+  foulsCommitted Int?
+  foulsDrawn     Int?
+  crosses        Int?
+  rating         Float?
+  createdAt      DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, playerId])
+  @@index([playerId])
+  @@index([teamId])
+}
+
+model PlayerSeasonStats {
+  id             String   @id @default(cuid())
+  playerId       String
+  teamId         String
+  season         String
+  leagueId       String
+  appearances    Int      @default(0)
+  goals          Int      @default(0)
+  assists        Int      @default(0)
+  yellowCards    Int      @default(0)
+  redCards       Int      @default(0)
+  minutesPlayed  Int      @default(0)
+  shotsTotal     Int?
+  shotsOnTarget  Int?
+  passAccuracy   Float?
+  crosses        Int?
+  rating         Float?
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, season, leagueId])
+  @@index([teamId])
+}
+
+// ============================================================================
+// PHASE 2: STREAK DETECTION
+// ============================================================================
+
+model Streak {
+  id           String      @id @default(cuid())
+  teamId       String
+  marketName   String
+  line         Float?
+  venueFilter  VenueFilter @default(ALL)
+  streakLength Int
+  windowSize   Int
+  hitRate      Float
+  confidence   Float       @default(0.5)
+  isActive     Boolean     @default(true)
+  lastMatchId  String?
+  startedAt    DateTime
+  detectedAt   DateTime    @default(now())
+  expiresAt    DateTime?
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  team         Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  streakMatches StreakMatch[]
+  markets      Market[]
+
+  @@index([teamId, marketName, venueFilter])
+  @@index([isActive, hitRate(sort: Desc)])
+  @@index([teamId, isActive])
+}
+
+model StreakMatch {
+  id        String   @id @default(cuid())
+  streakId  String
+  eventId   String
+  wasHit    Boolean
+  matchDate DateTime
+  createdAt DateTime @default(now())
+
+  streak    Streak   @relation(fields: [streakId], references: [id], onDelete: Cascade)
+
+  @@unique([streakId, eventId])
+  @@index([streakId])
 }

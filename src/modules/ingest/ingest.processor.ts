@@ -45,4 +45,16 @@ export class IngestProcessor {
       throw error;
     }
   }
+
+  @Process('player-data-ingest')
+  async processPlayerDataIngest(job: Job): Promise<void> {
+    this.logger.log('Processing player data ingestion for recent events');
+    try {
+      await this.ingestService.ingestPlayerDataForRecentEvents();
+      this.logger.log('Player data ingestion completed');
+    } catch (error) {
+      this.logger.error('Player data ingestion failed', error);
+      throw error;
+    }
+  }
 }

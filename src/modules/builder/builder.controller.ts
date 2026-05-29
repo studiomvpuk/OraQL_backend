@@ -4,6 +4,8 @@ import {
   Post,
   Delete,
   Param,
+  Query,
+  Body,
   Request,
 } from '@nestjs/common';
 import { BuilderService } from './builder.service';
@@ -48,6 +50,39 @@ export class BuilderController {
     const userId = this.getUserId(req);
     const text = await this.builderService.exportSelections(userId);
     return { text };
+  }
+
+  /**
+   * GET /api/v1/builder/suggestions
+   * Get AI-suggested multi-leg tickets based on active streaks
+   * across all upcoming events and leagues.
+   */
+  @Get('suggestions')
+  async getSuggestedTickets(
+    @Query('maxLegs') maxLegs?: string,
+    @Query('minLegs') minLegs?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const tickets = await this.builderService.getSuggestedTickets({
+      maxLegs: maxLegs ? parseInt(maxLegs, 10) : undefined,
+      minLegs: minLegs ? parseInt(minLegs, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+    return { tickets, total: tickets.length };
+  }
+
+  /**
+   * POST /api/v1/builder/apply-suggestion
+   * Apply a suggested ticket — clears builder and adds the ticket's legs.
+   * Body: { legs: [{ marketId: string }] }
+   */
+  @Post('apply-suggestion')
+  async applySuggestion(
+    @Body() body: { legs: Array<{ marketId: string }> },
+    @Request() req: any,
+  ) {
+    const userId = this.getUserId(req);
+    return this.builderService.applySuggestedTicket(userId, body.legs || []);
   }
 
   /**

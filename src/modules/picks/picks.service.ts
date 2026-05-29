@@ -100,10 +100,22 @@ export class PicksService {
       take: this.MAX_PICKS_PER_EVENT,
     });
 
-    // Step 3: Create ranked picks
+    // Step 3: Create ranked picks (with streak boost if applicable)
     const picks = await Promise.all(
-      topMarkets.map((market: any, index: number) =>
-        this.prisma.pick.create({
+      topMarkets.map(async (market: any, index: number) => {
+        // Check if this market has an attached streak
+        let streakBoost: number | null = null;
+        if (market.streakId) {
+          const streak = await this.prisma.streak.findUnique({
+            where: { id: market.streakId },
+          });
+          if (streak && streak.isActive) {
+            // Compute a simple boost from streak hit rate
+            streakBoost = Math.max(0, (streak.hitRate - 0.5) * 0.15);
+          }
+        }
+
+        return this.prisma.pick.create({
           data: {
             eventId,
             marketId: market.id,
@@ -111,13 +123,16 @@ export class PicksService {
             confidence: market.confidence,
             rank: index + 1,
             isActive: true,
-            explanation: `Oracle ML model prediction for ${market.name}`,
+            streakBoost,
+            explanation: market.streakSummary
+              ? `Oracle prediction for ${market.name} | ${market.streakSummary}`
+              : `Oracle prediction for ${market.name}`,
           },
           include: {
             market: true,
           },
-        }),
-      ),
+        });
+      }),
     );
 
     return picks;

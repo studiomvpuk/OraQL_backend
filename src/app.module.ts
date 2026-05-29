@@ -23,6 +23,7 @@ import { ProbabilityModule } from './modules/probability/probability.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { HealthModule } from './modules/health/health.module';
 import { MailModule } from './modules/mail/mail.module';
+import { StreaksModule } from './modules/streaks/streaks.module';
 
 @Module({
   imports: [
@@ -107,6 +108,7 @@ import { MailModule } from './modules/mail/mail.module';
     ProbabilityModule,
     StorageModule,
     HealthModule,
+    StreaksModule,
   ],
 })
 export class AppModule {}
