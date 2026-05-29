@@ -117,12 +117,14 @@ export class IngestService {
             },
           });
 
-          // Upsert home team
+          // Upsert home team (always update leagueId so teams
+          // aren't stuck under a cup they were first seen in)
           const homeTeam = await this.prisma.team.upsert({
             where: { externalId: fixture.homeTeamExternalId },
             update: {
               ...(fixture.homeTeamName && { name: fixture.homeTeamName }),
               ...(fixture.homeTeamLogoUrl && { logoUrl: fixture.homeTeamLogoUrl }),
+              leagueId: league.id,
             },
             create: {
               externalId: fixture.homeTeamExternalId,
@@ -139,6 +141,7 @@ export class IngestService {
             update: {
               ...(fixture.awayTeamName && { name: fixture.awayTeamName }),
               ...(fixture.awayTeamLogoUrl && { logoUrl: fixture.awayTeamLogoUrl }),
+              leagueId: league.id,
             },
             create: {
               externalId: fixture.awayTeamExternalId,
