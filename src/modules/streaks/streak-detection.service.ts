@@ -20,9 +20,9 @@ interface MatchStatsRow {
   shotsTotal: number | null;
   shotsOnTarget: number | null;
   possession: number | null;
-  corners: number;
-  yellowCards: number;
-  redCards: number;
+  corners: number | null;
+  yellowCards: number | null;
+  redCards: number | null;
   fouls: number | null;
   offsides: number | null;
   // From the event itself
@@ -394,9 +394,9 @@ export class StreakDetectionService {
         shotsTotal: stats?.shotsTotal ?? null,
         shotsOnTarget: stats?.shotsOnTarget ?? null,
         possession: stats?.possession ?? null,
-        corners: stats?.corners ?? 0,
-        yellowCards: stats?.yellowCards ?? 0,
-        redCards: stats?.redCards ?? 0,
+        corners: stats?.corners ?? null,
+        yellowCards: stats?.yellowCards ?? null,
+        redCards: stats?.redCards ?? null,
         fouls: stats?.fouls ?? null,
         offsides: stats?.offsides ?? null,
         homeScore: e.homeScore,
@@ -429,31 +429,42 @@ export class StreakDetectionService {
       where: { eventId: { in: eventIds } },
     });
 
-    // Group by eventId → sum both teams' stat
+    // Group by eventId → sum both teams' stat.
+    // Only include events where at least one team has real stat data.
     const totalByEvent = new Map<string, number>();
     for (const stat of allStats) {
+      const value =
+        statField === 'corners'
+          ? stat.corners
+          : stat.yellowCards + stat.redCards;
+
       const current = totalByEvent.get(stat.eventId) || 0;
-      if (statField === 'corners') {
-        totalByEvent.set(stat.eventId, current + stat.corners);
-      } else {
-        totalByEvent.set(
-          stat.eventId,
-          current + stat.yellowCards + stat.redCards,
-        );
-      }
+      totalByEvent.set(stat.eventId, current + value);
     }
+
+    // Only consider events that actually have MatchStats data.
+    // Without real stats, corners/cards default to 0 which creates
+    // false-positive UNDER streaks (0 < any line is always true).
+    const windowWithStats = window.filter((m) => totalByEvent.has(m.eventId));
+
+    if (windowWithStats.length < this.MIN_STREAK_LENGTH) {
+      // Not enough events with real stat data to detect a streak
+      return;
+    }
+
+    const effectiveWindowSize = windowWithStats.length;
 
     for (const line of lines) {
       for (const direction of ['OVER', 'UNDER'] as const) {
-        const results = window.map((m) => {
-          const total = totalByEvent.get(m.eventId) ?? 0;
+        const results = windowWithStats.map((m) => {
+          const total = totalByEvent.get(m.eventId)!;
           const hit =
             direction === 'OVER' ? total > line : total < line;
           return { eventId: m.eventId, hit };
         });
 
         const hitCount = results.filter((r) => r.hit).length;
-        const hitRate = hitCount / windowSize;
+        const hitRate = hitCount / effectiveWindowSize;
         if (hitRate < this.MIN_HIT_RATE) continue;
 
         const streakLength = this.countConsecutive(
@@ -461,7 +472,7 @@ export class StreakDetectionService {
         );
         if (streakLength < this.MIN_STREAK_LENGTH) continue;
 
-        const streakStartMatch = window[streakLength - 1];
+        const streakStartMatch = windowWithStats[streakLength - 1];
 
         streaks.push({
           teamId,
@@ -469,7 +480,7 @@ export class StreakDetectionService {
           line,
           venueFilter,
           streakLength,
-          windowSize,
+          windowSize: effectiveWindowSize,
           hitRate,
           matchIds: results.map((r) => r.eventId),
           hitResults: results.map((r) => r.hit),
