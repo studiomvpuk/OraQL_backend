@@ -660,6 +660,152 @@ export class IngestService {
   }
 
   // ==========================================================================
+  // PHASE 2: TEAM-LEVEL MATCH STATS INGESTION (corners, cards, possession)
+  // ==========================================================================
+
+  /**
+   * Daily ingest of team-level match stats for recently finished events (5:30 AM).
+   * Runs after fixture + player data ingestion so events exist in DB.
+   */
+  @Cron('30 5 * * *')
+  async ingestDailyMatchStats(): Promise<void> {
+    this.logger.log('Starting daily match stats ingestion');
+    try {
+      await this.ingestQueue.add(
+        'match-stats-ingest',
+        {},
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 3000 },
+        },
+      );
+    } catch (error) {
+      this.logger.error('Failed to queue match stats ingest job', error);
+    }
+  }
+
+  /**
+   * Ingest team-level match statistics (corners, cards, possession, shots, fouls)
+   * for all recently finished events that don't already have MatchStats records.
+   */
+  async ingestMatchStatsForFinishedEvents(
+    cutoffDate?: Date,
+    batchSize = 50,
+  ): Promise<{ processed: number; succeeded: number; failed: number }> {
+    const cutoff = cutoffDate || new Date(Date.now() - 48 * 60 * 60 * 1000); // default: last 48h
+
+    // Find finished events that have NO matchStats yet
+    const finishedEvents = await this.prisma.event.findMany({
+      where: {
+        status: 'FINISHED',
+        kickoffAt: { gte: cutoff },
+        matchStats: { none: {} },
+      },
+      include: {
+        homeTeam: true,
+        awayTeam: true,
+      },
+      take: batchSize,
+      orderBy: { kickoffAt: 'desc' },
+    });
+
+    this.logger.log(
+      `Ingesting match stats for ${finishedEvents.length} finished events (cutoff: ${cutoff.toISOString()})`,
+    );
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const event of finishedEvents) {
+      try {
+        await this.ingestMatchStatsForEvent(event);
+        succeeded++;
+        await this.createIngestJob('MATCH_STATS_INGEST', event.externalId, 'COMPLETED');
+      } catch (error) {
+        failed++;
+        this.logger.warn(
+          `Failed to ingest match stats for event ${event.id} (ext: ${event.externalId})`,
+          error,
+        );
+        await this.createIngestJob('MATCH_STATS_INGEST', event.externalId, 'FAILED', error);
+      }
+    }
+
+    this.logger.log(
+      `Match stats ingestion complete: ${succeeded} succeeded, ${failed} failed out of ${finishedEvents.length}`,
+    );
+
+    return { processed: finishedEvents.length, succeeded, failed };
+  }
+
+  /**
+   * Ingest team-level match stats for a single event.
+   * Calls API-Football /fixtures/statistics and upserts two MatchStats rows
+   * (one per team).
+   */
+  private async ingestMatchStatsForEvent(event: any): Promise<void> {
+    const statsData = await this.apiFootballAdapter.getMatchStats(event.externalId);
+
+    if (!statsData || statsData.length === 0) {
+      this.logger.debug(`No match stats returned for fixture ${event.externalId}`);
+      return;
+    }
+
+    // Build lookup: external team ID → internal team ID
+    const teamLookup: Record<string, string> = {
+      [event.homeTeam.externalId]: event.homeTeam.id,
+      [event.awayTeam.externalId]: event.awayTeam.id,
+    };
+
+    for (const stat of statsData) {
+      const teamId = teamLookup[stat.teamExternalId];
+      if (!teamId) {
+        this.logger.debug(
+          `Unknown team externalId ${stat.teamExternalId} for fixture ${event.externalId} — skipping`,
+        );
+        continue;
+      }
+
+      await this.prisma.matchStats.upsert({
+        where: {
+          eventId_teamId: {
+            eventId: event.id,
+            teamId,
+          },
+        },
+        update: {
+          goals: stat.goals,
+          shotsTotal: stat.shotsTotal ?? null,
+          shotsOnTarget: stat.shotsOnTarget ?? null,
+          possession: stat.possession ?? null,
+          corners: stat.corners,
+          yellowCards: stat.yellowCards,
+          redCards: stat.redCards,
+          fouls: stat.fouls ?? null,
+          offsides: stat.offsides ?? null,
+        },
+        create: {
+          eventId: event.id,
+          teamId,
+          goals: stat.goals,
+          shotsTotal: stat.shotsTotal ?? null,
+          shotsOnTarget: stat.shotsOnTarget ?? null,
+          possession: stat.possession ?? null,
+          corners: stat.corners,
+          yellowCards: stat.yellowCards,
+          redCards: stat.redCards,
+          fouls: stat.fouls ?? null,
+          offsides: stat.offsides ?? null,
+        },
+      });
+    }
+
+    this.logger.debug(
+      `Ingested ${statsData.length} team match stats for fixture ${event.externalId}`,
+    );
+  }
+
+  // ==========================================================================
   // PRIVATE HELPERS
   // ==========================================================================
 

@@ -285,12 +285,29 @@ export class StreakDetectionService {
     streaksDetected: number;
     streaksSaved: number;
   }> {
-    const teams = await this.prisma.team.findMany({
+    // First try teams with MatchStats (full data including corners/cards)
+    let teams = await this.prisma.team.findMany({
       where: {
         matchStats: { some: {} },
       },
       select: { id: true, name: true },
     });
+
+    // If no MatchStats exist, fall back to teams with finished events
+    // (goals/BTTS/CS markets only need homeScore/awayScore from Event)
+    if (teams.length === 0) {
+      this.logger.log('No MatchStats found — falling back to Event scores for goal-based markets');
+      const teamsWithEvents = await this.prisma.team.findMany({
+        where: {
+          OR: [
+            { homeEvents: { some: { status: 'FINISHED' } } },
+            { awayEvents: { some: { status: 'FINISHED' } } },
+          ],
+        },
+        select: { id: true, name: true },
+      });
+      teams = teamsWithEvents;
+    }
 
     this.logger.log(`SPOT engine scanning ${teams.length} teams`);
 
@@ -366,29 +383,29 @@ export class StreakDetectionService {
       },
     });
 
-    return events
-      .filter((e) => e.matchStats.length > 0)
-      .map((e) => {
-        const stats = e.matchStats[0];
-        return {
-          eventId: e.id,
-          teamId,
-          goals: stats.goals,
-          shotsTotal: stats.shotsTotal,
-          shotsOnTarget: stats.shotsOnTarget,
-          possession: stats.possession,
-          corners: stats.corners,
-          yellowCards: stats.yellowCards,
-          redCards: stats.redCards,
-          fouls: stats.fouls,
-          offsides: stats.offsides,
-          homeScore: e.homeScore,
-          awayScore: e.awayScore,
-          homeTeamId: e.homeTeamId,
-          awayTeamId: e.awayTeamId,
-          kickoffAt: e.kickoffAt,
-        };
-      });
+    return events.map((e) => {
+      const stats = e.matchStats?.[0];
+      const isHome = e.homeTeamId === teamId;
+      return {
+        eventId: e.id,
+        teamId,
+        // Use MatchStats if available, otherwise derive from Event scores
+        goals: stats?.goals ?? (isHome ? (e.homeScore ?? 0) : (e.awayScore ?? 0)),
+        shotsTotal: stats?.shotsTotal ?? null,
+        shotsOnTarget: stats?.shotsOnTarget ?? null,
+        possession: stats?.possession ?? null,
+        corners: stats?.corners ?? 0,
+        yellowCards: stats?.yellowCards ?? 0,
+        redCards: stats?.redCards ?? 0,
+        fouls: stats?.fouls ?? null,
+        offsides: stats?.offsides ?? null,
+        homeScore: e.homeScore,
+        awayScore: e.awayScore,
+        homeTeamId: e.homeTeamId,
+        awayTeamId: e.awayTeamId,
+        kickoffAt: e.kickoffAt,
+      };
+    });
   }
 
   /**
@@ -491,10 +508,17 @@ export class StreakDetectionService {
       },
     });
 
+    // Compute confidence from hit rate + streak length + sample size
+    const baseConf = streak.hitRate;
+    const lengthBonus = Math.min(streak.streakLength / 15, 0.15);
+    const samplePenalty = streak.windowSize < 10 ? 0.05 : 0;
+    const confidence = Math.min(baseConf + lengthBonus - samplePenalty, 0.99);
+
     const data = {
       streakLength: streak.streakLength,
       windowSize: streak.windowSize,
       hitRate: streak.hitRate,
+      confidence,
       isActive: true,
       lastMatchId: streak.matchIds[0] || null,
       startedAt: streak.startedAt,

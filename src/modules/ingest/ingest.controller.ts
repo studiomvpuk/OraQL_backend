@@ -4,8 +4,8 @@ import { IngestService } from './ingest.service';
 
 class TriggerIngestDto {
   @IsOptional()
-  @IsIn(['fixtures', 'odds', 'lineups', 'player-data', 'all'])
-  type?: 'fixtures' | 'odds' | 'lineups' | 'player-data' | 'all';
+  @IsIn(['fixtures', 'odds', 'lineups', 'player-data', 'match-stats', 'all'])
+  type?: 'fixtures' | 'odds' | 'lineups' | 'player-data' | 'match-stats' | 'all';
 
   @IsOptional()
   @IsInt()
@@ -20,6 +20,20 @@ class BackfillPlayerDataDto {
   @Min(1)
   @Max(30)
   days?: number;
+}
+
+class BackfillMatchStatsDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  days?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(10)
+  @Max(200)
+  batchSize?: number;
 }
 
 class BackfillSeasonStatsDto {
@@ -68,6 +82,11 @@ export class IngestController {
       if (type === 'player-data' || type === 'all') {
         await this.ingestService.ingestPlayerDataForRecentEvents();
         results['player-data'] = 'completed';
+      }
+
+      if (type === 'match-stats' || type === 'all') {
+        const statsResult = await this.ingestService.ingestMatchStatsForFinishedEvents();
+        results['match-stats'] = `completed (${statsResult.succeeded}/${statsResult.processed})`;
       }
 
       return { triggered: type, results };
@@ -121,6 +140,68 @@ export class IngestController {
       totalEvents: finishedEvents.length,
       succeeded,
       failed,
+    };
+  }
+
+  /**
+   * Backfill team-level match statistics for finished events over the last N days.
+   * POST /api/v1/ingest/backfill/match-stats
+   * Body: { days?: number, batchSize?: number } (default 30 days, 50 per batch)
+   *
+   * This populates MatchStats (corners, cards, possession, etc.) needed for
+   * streak detection on non-goals markets.
+   */
+  @Post('backfill/match-stats')
+  @HttpCode(200)
+  async backfillMatchStats(@Body() dto: BackfillMatchStatsDto) {
+    const days = dto.days || 30;
+    const batchSize = dto.batchSize || 50;
+    this.logger.log(`Backfilling match stats for last ${days} days (batch: ${batchSize})`);
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    cutoff.setHours(0, 0, 0, 0);
+
+    // Count total events to process
+    const totalCount = await this.ingestService['prisma'].event.count({
+      where: {
+        status: 'FINISHED',
+        kickoffAt: { gte: cutoff },
+        matchStats: { none: {} },
+      },
+    });
+
+    this.logger.log(`Found ${totalCount} events without match stats in last ${days} days`);
+
+    let totalSucceeded = 0;
+    let totalFailed = 0;
+    let totalProcessed = 0;
+
+    // Process in batches to avoid overwhelming the API rate limit
+    while (totalProcessed < totalCount) {
+      const result = await this.ingestService.ingestMatchStatsForFinishedEvents(
+        cutoff,
+        batchSize,
+      );
+
+      totalSucceeded += result.succeeded;
+      totalFailed += result.failed;
+      totalProcessed += result.processed;
+
+      // If no more events were found, stop
+      if (result.processed === 0) break;
+
+      this.logger.log(
+        `Batch complete: ${totalProcessed}/${totalCount} processed (${totalSucceeded} ok, ${totalFailed} failed)`,
+      );
+    }
+
+    return {
+      backfill: 'match-stats',
+      days,
+      totalEvents: totalCount,
+      succeeded: totalSucceeded,
+      failed: totalFailed,
     };
   }
 

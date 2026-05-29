@@ -57,4 +57,18 @@ export class IngestProcessor {
       throw error;
     }
   }
+
+  @Process('match-stats-ingest')
+  async processMatchStatsIngest(job: Job): Promise<void> {
+    this.logger.log('Processing match stats ingestion for finished events');
+    try {
+      const result = await this.ingestService.ingestMatchStatsForFinishedEvents();
+      this.logger.log(
+        `Match stats ingestion completed: ${result.succeeded}/${result.processed} succeeded`,
+      );
+    } catch (error) {
+      this.logger.error('Match stats ingestion failed', error);
+      throw error;
+    }
+  }
 }
