@@ -215,6 +215,99 @@ export class StreaksController {
   }
 
   /**
+   * GET /api/v1/streaks/diagnostics
+   * Deep look at what data exists — leagues, events, streaks per league.
+   * Use this to understand data coverage.
+   */
+  @Get('diagnostics')
+  async getDiagnostics() {
+    // Total counts
+    const [leagueCount, teamCount, eventCount, finishedCount, streakCount] = await Promise.all([
+      this.prisma.league.count(),
+      this.prisma.team.count(),
+      this.prisma.event.count(),
+      this.prisma.event.count({ where: { status: 'FINISHED' } }),
+      this.prisma.streak.count({ where: { isActive: true } }),
+    ]);
+
+    // Per-league breakdown: events and streaks
+    const leagues = await this.prisma.league.findMany({
+      select: {
+        id: true,
+        name: true,
+        country: true,
+        _count: {
+          select: {
+            events: true,
+            teams: true,
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Count finished events per league
+    const finishedByLeague = await this.prisma.event.groupBy({
+      by: ['leagueId'],
+      where: { status: 'FINISHED' },
+      _count: true,
+    });
+    const finishedMap = new Map(finishedByLeague.map((r) => [r.leagueId, r._count]));
+
+    // Count active streaks per league (through team relation)
+    const streaksByTeam = await this.prisma.streak.groupBy({
+      by: ['teamId'],
+      where: { isActive: true },
+      _count: true,
+    });
+
+    // Map teamId → leagueId
+    const teamLeagueMap = new Map<string, string>();
+    const allTeams = await this.prisma.team.findMany({ select: { id: true, leagueId: true } });
+    for (const t of allTeams) teamLeagueMap.set(t.id, t.leagueId);
+
+    const streaksByLeague = new Map<string, number>();
+    for (const s of streaksByTeam) {
+      const leagueId = teamLeagueMap.get(s.teamId);
+      if (leagueId) streaksByLeague.set(leagueId, (streaksByLeague.get(leagueId) || 0) + s._count);
+    }
+
+    // Date range of events
+    const [earliest, latest] = await Promise.all([
+      this.prisma.event.findFirst({ orderBy: { kickoffAt: 'asc' }, select: { kickoffAt: true } }),
+      this.prisma.event.findFirst({ orderBy: { kickoffAt: 'desc' }, select: { kickoffAt: true } }),
+    ]);
+
+    const leagueBreakdown = leagues.map((l) => ({
+      name: l.name,
+      country: l.country,
+      teams: l._count.teams,
+      totalEvents: l._count.events,
+      finishedEvents: finishedMap.get(l.id) || 0,
+      activeStreaks: streaksByLeague.get(l.id) || 0,
+    }));
+
+    // Sort by finished events descending to see which leagues have most data
+    leagueBreakdown.sort((a, b) => b.finishedEvents - a.finishedEvents);
+
+    return {
+      summary: {
+        totalLeagues: leagueCount,
+        totalTeams: teamCount,
+        totalEvents: eventCount,
+        finishedEvents: finishedCount,
+        activeStreaks: streakCount,
+        dataRange: {
+          earliest: earliest?.kickoffAt,
+          latest: latest?.kickoffAt,
+        },
+      },
+      topLeagues: leagueBreakdown.slice(0, 30),
+      allLeagues: leagueBreakdown,
+    };
+  }
+
+  /**
    * GET /api/v1/streaks/stats
    * Summary stats about the streak engine.
    */
