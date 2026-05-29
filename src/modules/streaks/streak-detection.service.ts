@@ -175,10 +175,10 @@ export class StreakDetectionService {
 
   /** Minimum consecutive hits to qualify as a streak */
   private readonly MIN_STREAK_LENGTH = 3;
-  /** Window sizes to scan */
-  private readonly WINDOW_SIZES = [5, 10, 15];
+  /** Window sizes to scan (3 included for teams with fewer matches) */
+  private readonly WINDOW_SIZES = [3, 5, 10, 15];
   /** Minimum hit rate within a window to flag */
-  private readonly MIN_HIT_RATE = 0.7;
+  private readonly MIN_HIT_RATE = 0.6;
 
   constructor(private prisma: PrismaService) {}
 
@@ -196,7 +196,12 @@ export class StreakDetectionService {
     for (const venueFilter of ['ALL', 'HOME', 'AWAY'] as VenueFilter[]) {
       // Fetch match history for this team + venue filter
       const matches = await this.getTeamMatchHistory(teamId, venueFilter, 20);
-      if (matches.length < this.MIN_STREAK_LENGTH) continue;
+      if (matches.length < this.MIN_STREAK_LENGTH) {
+        this.logger.debug(
+          `Team ${teamId} [${venueFilter}]: only ${matches.length} matches — skipping`,
+        );
+        continue;
+      }
 
       // For each window size
       for (const windowSize of this.WINDOW_SIZES) {
@@ -285,29 +290,18 @@ export class StreakDetectionService {
     streaksDetected: number;
     streaksSaved: number;
   }> {
-    // First try teams with MatchStats (full data including corners/cards)
-    let teams = await this.prisma.team.findMany({
+    // Find ALL teams that have at least one finished event.
+    // Goals/BTTS/CS markets derive from Event.homeScore/awayScore (always available).
+    // Corners/Cards markets use MatchStats when present (gracefully skipped otherwise).
+    const teams = await this.prisma.team.findMany({
       where: {
-        matchStats: { some: {} },
+        OR: [
+          { homeEvents: { some: { status: 'FINISHED' } } },
+          { awayEvents: { some: { status: 'FINISHED' } } },
+        ],
       },
       select: { id: true, name: true },
     });
-
-    // If no MatchStats exist, fall back to teams with finished events
-    // (goals/BTTS/CS markets only need homeScore/awayScore from Event)
-    if (teams.length === 0) {
-      this.logger.log('No MatchStats found — falling back to Event scores for goal-based markets');
-      const teamsWithEvents = await this.prisma.team.findMany({
-        where: {
-          OR: [
-            { homeEvents: { some: { status: 'FINISHED' } } },
-            { awayEvents: { some: { status: 'FINISHED' } } },
-          ],
-        },
-        select: { id: true, name: true },
-      });
-      teams = teamsWithEvents;
-    }
 
     this.logger.log(`SPOT engine scanning ${teams.length} teams`);
 
@@ -318,6 +312,12 @@ export class StreakDetectionService {
       try {
         const streaks = await this.detectStreaksForTeam(team.id);
         totalDetected += streaks.length;
+
+        if (streaks.length > 0) {
+          this.logger.log(
+            `${team.name}: ${streaks.length} streaks found (e.g. ${streaks[0].marketName} ×${streaks[0].streakLength})`,
+          );
+        }
 
         // Persist to DB
         for (const streak of streaks) {
