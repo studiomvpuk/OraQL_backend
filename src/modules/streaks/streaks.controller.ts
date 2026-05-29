@@ -79,14 +79,28 @@ export class StreaksController {
 
   /**
    * POST /api/v1/streaks/detect
-   * Manually trigger full streak detection scan.
+   * Manually trigger full streak detection scan (fire-and-forget).
+   * Returns 202 immediately; work runs in background.
    */
   @Post('detect')
-  @HttpCode(200)
+  @HttpCode(202)
   async triggerDetection() {
-    this.logger.log('Manual streak detection triggered');
-    const result = await this.streakDetectionService.detectAllStreaks();
-    return result;
+    this.logger.log('Manual streak detection triggered (fire-and-forget)');
+
+    this.streakDetectionService
+      .detectAllStreaks()
+      .then((result) =>
+        this.logger.log(
+          `Streak detection DONE: ${result.teamsScanned} teams, ` +
+          `${result.streaksDetected} detected, ${result.streaksSaved} saved`,
+        ),
+      )
+      .catch((err) => this.logger.error('Streak detection FAILED', err));
+
+    return {
+      status: 'started',
+      message: 'Streak detection running in background. Watch deploy logs for progress.',
+    };
   }
 
   /**
