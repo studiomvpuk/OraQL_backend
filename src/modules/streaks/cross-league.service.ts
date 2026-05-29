@@ -79,6 +79,12 @@ export class CrossLeagueService {
    * The PRESENT step of the pipeline.
    * Finds streak-backed picks across all upcoming events and assembles
    * optimal multi-leg tickets that span multiple leagues.
+   *
+   * PERFORMANCE: Uses 3 bulk queries instead of per-event loops.
+   * Previous implementation called getStreakSuggestionsForEvent() per event,
+   * which triggered ~50+ queries each (streaks + player validation + market lookup).
+   * With 100 upcoming events that cascaded into 5,000–15,000 DB round trips.
+   * Now: 1 events query + 1 streaks query + 1 markets query = 3 total.
    */
   async generateSuggestedTickets(
     filters: CrossLeagueFilters = {},
@@ -89,7 +95,7 @@ export class CrossLeagueService {
     const maxCombProb = filters.maxCombinedProbability || this.DEFAULT_MAX_COMBINED_PROB;
     const limit = filters.limit || this.DEFAULT_LIMIT;
 
-    // 1. Get all upcoming events (next 48 hours)
+    // ── Query 1: Upcoming events (next 48 hours) ──
     const now = new Date();
     const cutoff = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
@@ -117,53 +123,86 @@ export class CrossLeagueService {
       return [];
     }
 
-    // 2. For each event, get streak-backed suggestions
+    // ── Query 2: All active streaks for involved teams (single bulk fetch) ──
+    const teamIds = [
+      ...new Set(
+        upcomingEvents.flatMap((e) => [e.homeTeamId, e.awayTeamId]),
+      ),
+    ];
+
+    const allStreaks = await this.prisma.streak.findMany({
+      where: { teamId: { in: teamIds }, isActive: true },
+      include: { team: true },
+      orderBy: { hitRate: 'desc' },
+    });
+
+    // Index streaks by teamId for O(1) lookup
+    const streaksByTeam = new Map<string, (typeof allStreaks)>();
+    for (const s of allStreaks) {
+      const arr = streaksByTeam.get(s.teamId) || [];
+      arr.push(s);
+      streaksByTeam.set(s.teamId, arr);
+    }
+
+    // ── Build candidate legs in memory (zero DB calls) ──
     const allLegs: TicketLeg[] = [];
+    const marketKeys: { eventId: string; name: string; line: number | null }[] = [];
 
     for (const event of upcomingEvents) {
-      try {
-        const suggestions =
-          await this.streakAnalysisService.getStreakSuggestionsForEvent(event.id);
+      // Home streaks: HOME or ALL venue filter
+      const homeStreaks = (streaksByTeam.get(event.homeTeamId) || []).filter(
+        (s) => s.venueFilter === 'HOME' || s.venueFilter === 'ALL',
+      );
+      // Away streaks: AWAY or ALL venue filter
+      const awayStreaks = (streaksByTeam.get(event.awayTeamId) || []).filter(
+        (s) => s.venueFilter === 'AWAY' || s.venueFilter === 'ALL',
+      );
 
-        for (const suggestion of suggestions) {
-          if (suggestion.confidence < 0.5) continue; // skip low-confidence
-
-          // Find the corresponding market in DB
-          const market = await this.prisma.market.findFirst({
-            where: {
-              eventId: event.id,
-              name: suggestion.marketName,
-              line: suggestion.line,
-            },
-          });
-
-          const isHome = suggestion.teamId === event.homeTeamId;
-          const team = isHome ? event.homeTeam : event.awayTeam;
-          const opponent = isHome ? event.awayTeam : event.homeTeam;
-
-          allLegs.push({
-            eventId: event.id,
-            marketId: market?.id || null,
-            teamName: team.name,
-            teamLogoUrl: team.logoUrl,
-            leagueName: event.league.name,
-            leagueCountry: event.league.country,
-            opponent: opponent.name,
-            kickoffAt: event.kickoffAt,
-            marketName: suggestion.marketName,
-            line: suggestion.line,
-            probability: market?.probability || suggestion.confidence,
-            confidence: suggestion.confidence,
-            streakId: suggestion.streakId,
-            streakSummary: suggestion.summary,
-            validationLevel: suggestion.validationLevel,
-          });
-        }
-      } catch (error) {
-        this.logger.warn(
-          `Failed to get suggestions for event ${event.id}`,
-          error,
+      for (const streak of [...homeStreaks, ...awayStreaks]) {
+        const confidence = this.streakAnalysisService.computeConfidence(
+          streak.hitRate,
+          streak.streakLength,
+          streak.windowSize,
         );
+        if (confidence < 0.5) continue;
+
+        const isHome = streak.teamId === event.homeTeamId;
+        const team = isHome ? event.homeTeam : event.awayTeam;
+        const opponent = isHome ? event.awayTeam : event.homeTeam;
+
+        const summary = this.streakAnalysisService.buildSummary(
+          streak.team.name,
+          streak.marketName,
+          streak.line,
+          streak.venueFilter,
+          streak.streakLength,
+          streak.windowSize,
+          streak.hitRate,
+        );
+
+        // Track the market key for batch lookup
+        marketKeys.push({
+          eventId: event.id,
+          name: streak.marketName,
+          line: streak.line,
+        });
+
+        allLegs.push({
+          eventId: event.id,
+          marketId: null, // populated after batch market query
+          teamName: team.name,
+          teamLogoUrl: team.logoUrl,
+          leagueName: event.league.name,
+          leagueCountry: event.league.country,
+          opponent: opponent.name,
+          kickoffAt: event.kickoffAt,
+          marketName: streak.marketName,
+          line: streak.line,
+          probability: confidence, // updated if market has a real probability
+          confidence,
+          streakId: streak.id,
+          streakSummary: summary,
+        });
       }
     }
 
@@ -171,11 +210,43 @@ export class CrossLeagueService {
       return [];
     }
 
-    // 3. Sort legs by confidence (best first)
+    // ── Query 3: Batch-fetch all matching markets (single query) ──
+    const uniqueEventIds = [...new Set(marketKeys.map((m) => m.eventId))];
+    const uniqueMarketNames = [...new Set(marketKeys.map((m) => m.name))];
+
+    const markets = await this.prisma.market.findMany({
+      where: {
+        eventId: { in: uniqueEventIds },
+        name: { in: uniqueMarketNames },
+      },
+      select: { id: true, eventId: true, name: true, line: true, probability: true },
+    });
+
+    // Composite-key lookup: "eventId:name:line" → market
+    const marketMap = new Map<string, { id: string; probability: number | null }>();
+    for (const m of markets) {
+      marketMap.set(`${m.eventId}:${m.name}:${m.line}`, {
+        id: m.id,
+        probability: m.probability,
+      });
+    }
+
+    // Patch legs with real market IDs and probabilities
+    for (let i = 0; i < allLegs.length; i++) {
+      const key = `${marketKeys[i].eventId}:${marketKeys[i].name}:${marketKeys[i].line}`;
+      const market = marketMap.get(key);
+      if (market) {
+        allLegs[i].marketId = market.id;
+        if (market.probability != null) {
+          allLegs[i].probability = market.probability;
+        }
+      }
+    }
+
+    // ── Assemble tickets (pure in-memory, no more DB calls) ──
     allLegs.sort((a, b) => b.confidence - a.confidence);
 
-    // 4. Assemble tickets using a greedy diversification strategy
-    const tickets = this.assembleTickets(
+    return this.assembleTickets(
       allLegs,
       minLegs,
       maxLegs,
@@ -183,8 +254,6 @@ export class CrossLeagueService {
       maxCombProb,
       limit,
     );
-
-    return tickets;
   }
 
   // ==========================================================================

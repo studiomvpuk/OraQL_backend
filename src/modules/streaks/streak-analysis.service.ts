@@ -59,6 +59,10 @@ export class StreakAnalysisService {
   /** Streak boost factor range applied to probability */
   private readonly MAX_STREAK_BOOST = 0.12; // up to +12% probability boost
 
+  /** In-memory cache for scored streaks (streak data only changes once/day via cron) */
+  private scoreCache: { data: ScoredStreak[]; timestamp: number } | null = null;
+  private readonly SCORE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     private prisma: PrismaService,
     @Optional() private playerValidationService?: PlayerValidationService,
@@ -73,6 +77,15 @@ export class StreakAnalysisService {
    * This is the ANALYSE step.
    */
   async scoreAndRankStreaks(limit = 100): Promise<ScoredStreak[]> {
+    // Serve from cache if fresh (streak data only changes once/day)
+    const now = Date.now();
+    if (
+      this.scoreCache &&
+      now - this.scoreCache.timestamp < this.SCORE_CACHE_TTL_MS
+    ) {
+      return this.scoreCache.data.slice(0, limit);
+    }
+
     const activeStreaks = await this.prisma.streak.findMany({
       where: { isActive: true },
       include: {
@@ -132,6 +145,9 @@ export class StreakAnalysisService {
 
     // SORT by quality score descending
     scored.sort((a, b) => b.qualityScore - a.qualityScore);
+
+    // Cache the full sorted list (serve slices on subsequent requests)
+    this.scoreCache = { data: scored, timestamp: Date.now() };
 
     return scored.slice(0, limit);
   }
@@ -256,8 +272,9 @@ export class StreakAnalysisService {
   /**
    * Compute a confidence score [0, 1] for a streak.
    * Based on hit rate, streak length, and sample size.
+   * Public so CrossLeagueService can score streaks without re-querying.
    */
-  private computeConfidence(
+  computeConfidence(
     hitRate: number,
     streakLength: number,
     windowSize: number,
@@ -327,8 +344,9 @@ export class StreakAnalysisService {
   /**
    * Build a human-readable summary like:
    * "Arsenal Over 1.5 Goals in last 7 home matches (6/7, 86%)"
+   * Public so CrossLeagueService can build summaries in bulk without re-querying.
    */
-  private buildSummary(
+  buildSummary(
     teamName: string,
     marketName: string,
     line: number | null,
@@ -354,7 +372,7 @@ export class StreakAnalysisService {
   /**
    * Convert internal market name to display label.
    */
-  private marketLabel(marketName: string, line: number | null): string {
+  marketLabel(marketName: string, line: number | null): string {
     const labels: Record<string, string> = {
       GOALS_OVER: `Over ${line} Goals`,
       GOALS_UNDER: `Under ${line} Goals`,

@@ -17,6 +17,10 @@ import { PrismaService } from '../prisma/prisma.service';
 export class StreaksController {
   private readonly logger = new Logger(StreaksController.name);
 
+  /** Simple in-memory cache for stats (changes only when detection cron runs) */
+  private statsCache: { data: any; timestamp: number } | null = null;
+  private readonly STATS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     private streakDetectionService: StreakDetectionService,
     private streakAnalysisService: StreakAnalysisService,
@@ -192,6 +196,12 @@ export class StreaksController {
    */
   @Get('stats')
   async getStreakStats() {
+    // Serve cached stats if fresh
+    const now = Date.now();
+    if (this.statsCache && now - this.statsCache.timestamp < this.STATS_CACHE_TTL_MS) {
+      return this.statsCache.data;
+    }
+
     const [total, active, avgHitRate] = await Promise.all([
       this.prisma.streak.count(),
       this.prisma.streak.count({ where: { isActive: true } }),
@@ -201,12 +211,15 @@ export class StreaksController {
       }),
     ]);
 
-    return {
+    const data = {
       totalStreaks: total,
       activeStreaks: active,
       averageHitRate: avgHitRate._avg.hitRate,
       averageStreakLength: avgHitRate._avg.streakLength,
       averageConfidence: avgHitRate._avg.confidence,
     };
+
+    this.statsCache = { data, timestamp: now };
+    return data;
   }
 }
