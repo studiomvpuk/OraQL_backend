@@ -60,13 +60,40 @@ export class StreaksController {
       return this.leagueCache.data;
     }
 
+    // Get leagues with team counts
     const leagues = await this.prisma.league.findMany({
       where: { teams: { some: {} } },
       select: { id: true, name: true, country: true, logoUrl: true },
       orderBy: { name: 'asc' },
     });
 
-    const data = { leagues, total: leagues.length };
+    // Count active streaks per league in one query
+    const streakCounts = await this.prisma.streak.groupBy({
+      by: ['teamId'],
+      where: { isActive: true },
+      _count: { _all: true },
+    });
+
+    // Map teamId → leagueId
+    const teams = await this.prisma.team.findMany({
+      select: { id: true, leagueId: true },
+    });
+    const teamLeague = new Map<string, string>();
+    for (const t of teams) if (t.leagueId) teamLeague.set(t.id, t.leagueId);
+
+    // Sum streaks per league
+    const countByLeague = new Map<string, number>();
+    for (const s of streakCounts) {
+      const lid = teamLeague.get(s.teamId);
+      if (lid) countByLeague.set(lid, (countByLeague.get(lid) || 0) + s._count._all);
+    }
+
+    const leaguesWithCounts = leagues.map((l) => ({
+      ...l,
+      streakCount: countByLeague.get(l.id) || 0,
+    }));
+
+    const data = { leagues: leaguesWithCounts, total: leaguesWithCounts.length };
     this.leagueCache = { data, timestamp: now };
     return data;
   }
