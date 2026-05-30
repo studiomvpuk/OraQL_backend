@@ -76,18 +76,26 @@ export class StreakAnalysisService {
    * Score all active streaks and return them ranked by quality.
    * This is the ANALYSE step.
    */
-  async scoreAndRankStreaks(limit = 100): Promise<ScoredStreak[]> {
-    // Serve from cache if fresh (streak data only changes once/day)
+  async scoreAndRankStreaks(limit = 100, leagueName?: string): Promise<ScoredStreak[]> {
+    // Serve from cache if fresh AND no league filter (filtered queries bypass cache)
     const now = Date.now();
     if (
+      !leagueName &&
       this.scoreCache &&
       now - this.scoreCache.timestamp < this.SCORE_CACHE_TTL_MS
     ) {
       return this.scoreCache.data.slice(0, limit);
     }
 
+    const whereClause: any = { isActive: true };
+
+    // Filter by league name if provided
+    if (leagueName) {
+      whereClause.team = { league: { name: leagueName } };
+    }
+
     const activeStreaks = await this.prisma.streak.findMany({
-      where: { isActive: true },
+      where: whereClause,
       include: {
         team: {
           include: { league: true },
@@ -146,8 +154,10 @@ export class StreakAnalysisService {
     // SORT by quality score descending
     scored.sort((a, b) => b.qualityScore - a.qualityScore);
 
-    // Cache the full sorted list (serve slices on subsequent requests)
-    this.scoreCache = { data: scored, timestamp: Date.now() };
+    // Only cache the unfiltered global query
+    if (!leagueName) {
+      this.scoreCache = { data: scored, timestamp: Date.now() };
+    }
 
     return scored.slice(0, limit);
   }
