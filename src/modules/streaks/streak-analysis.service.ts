@@ -76,11 +76,11 @@ export class StreakAnalysisService {
    * Score all active streaks and return them ranked by quality.
    * This is the ANALYSE step.
    */
-  async scoreAndRankStreaks(limit = 100, leagueName?: string): Promise<ScoredStreak[]> {
+  async scoreAndRankStreaks(limit = 100, leagueName?: string, leagueId?: string): Promise<ScoredStreak[]> {
     // Serve from cache if fresh AND no league filter (filtered queries bypass cache)
     const now = Date.now();
     if (
-      !leagueName &&
+      !leagueName && !leagueId &&
       this.scoreCache &&
       now - this.scoreCache.timestamp < this.SCORE_CACHE_TTL_MS
     ) {
@@ -89,8 +89,10 @@ export class StreakAnalysisService {
 
     const whereClause: any = { isActive: true };
 
-    // Filter by league name if provided
-    if (leagueName) {
+    // Filter by league ID (preferred — unique) or name (fallback)
+    if (leagueId) {
+      whereClause.team = { leagueId };
+    } else if (leagueName) {
       whereClause.team = { league: { name: leagueName } };
     }
 
@@ -155,7 +157,7 @@ export class StreakAnalysisService {
     scored.sort((a, b) => b.qualityScore - a.qualityScore);
 
     // Only cache the unfiltered global query
-    if (!leagueName) {
+    if (!leagueName && !leagueId) {
       this.scoreCache = { data: scored, timestamp: Date.now() };
     }
 

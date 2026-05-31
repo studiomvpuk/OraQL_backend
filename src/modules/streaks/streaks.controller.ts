@@ -39,10 +39,12 @@ export class StreaksController {
     @Query('limit') limit?: string,
     @Query('sport') sport?: string,
     @Query('league') league?: string,
+    @Query('leagueId') leagueId?: string,
   ) {
     const scored = await this.streakAnalysisService.scoreAndRankStreaks(
       limit ? parseInt(limit, 10) : 50,
       league,
+      leagueId,
     );
 
     return { streaks: scored, total: scored.length };
