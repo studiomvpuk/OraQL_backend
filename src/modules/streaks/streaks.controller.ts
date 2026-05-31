@@ -137,6 +137,88 @@ export class StreaksController {
   }
 
   /**
+   * POST /api/v1/streaks/generate-markets
+   * Generate Market records from streak data for all upcoming events.
+   * This creates the probability data users see on event detail pages.
+   * No bookmaker dependency — probabilities derived from historical patterns.
+   */
+  @Post('generate-markets')
+  @HttpCode(200)
+  async generateMarketsFromStreaks() {
+    this.logger.log('Generating markets from streak data for upcoming events');
+
+    // Get all upcoming events (next 7 days)
+    const now = new Date();
+    const cutoff = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const upcomingEvents = await this.prisma.event.findMany({
+      where: {
+        status: { in: ['SCHEDULED', 'LINEUP_CONFIRMED'] },
+        kickoffAt: { gte: now, lte: cutoff },
+      },
+      select: { id: true },
+    });
+
+    let marketsCreated = 0;
+    let eventsProcessed = 0;
+
+    for (const event of upcomingEvents) {
+      try {
+        const suggestions =
+          await this.streakAnalysisService.getStreakSuggestionsForEvent(event.id);
+
+        for (const s of suggestions) {
+          // Check if market already exists
+          const existing = await this.prisma.market.findFirst({
+            where: {
+              eventId: event.id,
+              name: s.marketName,
+              ...(s.line != null ? { line: s.line } : {}),
+            },
+          });
+
+          if (!existing) {
+            const cat = s.marketName.includes('CORNER') ? 'CORNERS'
+              : s.marketName.includes('CARD') ? 'CARDS'
+              : s.marketName.includes('MATCH_RESULT') ? 'MATCH_RESULT'
+              : 'GOALS';
+
+            await this.prisma.market.create({
+              data: {
+                eventId: event.id,
+                category: cat,
+                name: s.marketName,
+                shortName: s.marketName.replace(/_/g, ' '),
+                line: s.line ?? undefined,
+                probability: s.confidence,
+                confidence: s.confidence,
+                isActive: true,
+                streakId: s.streakId,
+                streakSummary: s.summary,
+                explanation: s.summary,
+              },
+            });
+            marketsCreated++;
+          }
+        }
+        eventsProcessed++;
+      } catch (err) {
+        this.logger.warn(`Failed to generate markets for event ${event.id}`, err);
+      }
+    }
+
+    this.logger.log(
+      `Market generation done: ${marketsCreated} markets created across ${eventsProcessed} events`,
+    );
+
+    return {
+      eventsProcessed,
+      marketsCreated,
+      totalUpcoming: upcomingEvents.length,
+    };
+  }
+
+  /**
    * POST /api/v1/streaks/detect
    * Manually trigger full streak detection scan (fire-and-forget).
    * Returns 202 immediately; work runs in background.
@@ -148,12 +230,18 @@ export class StreaksController {
 
     this.streakDetectionService
       .detectAllStreaks()
-      .then((result) =>
+      .then(async (result) => {
         this.logger.log(
           `Streak detection DONE: ${result.teamsScanned} teams, ` +
           `${result.streaksDetected} detected, ${result.streaksSaved} saved`,
-        ),
-      )
+        );
+        // Auto-generate markets from the freshly detected streaks
+        try {
+          await this.generateMarketsFromStreaks();
+        } catch (err) {
+          this.logger.warn('Auto market generation after detection failed', err);
+        }
+      })
       .catch((err) => this.logger.error('Streak detection FAILED', err));
 
     return {
