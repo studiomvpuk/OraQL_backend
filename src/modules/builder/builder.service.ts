@@ -85,15 +85,63 @@ export class BuilderService {
    */
   async applySuggestedTicket(
     userId: string,
-    legs: Array<{ marketId: string }>,
+    legs: Array<{
+      marketId?: string;
+      eventId?: string;
+      marketName?: string;
+      line?: number | null;
+      confidence?: number;
+      streakId?: string;
+      streakSummary?: string;
+    }>,
   ) {
     // Clear existing selections
     await this.clearSelections(userId);
 
-    // Add each leg
+    // Add each leg — resolve or create markets from streak data
     for (const leg of legs) {
       try {
-        await this.addSelection(userId, leg.marketId);
+        let marketId = leg.marketId;
+
+        // If no marketId, find or create the market from streak data
+        if (!marketId && leg.eventId && leg.marketName) {
+          const existing = await this.prisma.market.findFirst({
+            where: {
+              eventId: leg.eventId,
+              name: leg.marketName,
+              ...(leg.line != null ? { line: leg.line } : {}),
+            },
+          });
+
+          if (existing) {
+            marketId = existing.id;
+          } else {
+            // Create a streak-backed market
+            const cat = leg.marketName.includes('CORNER') ? 'CORNERS'
+              : leg.marketName.includes('CARD') ? 'CARDS'
+              : leg.marketName.includes('MATCH_RESULT') ? 'MATCH_RESULT'
+              : 'GOALS';
+            const created = await this.prisma.market.create({
+              data: {
+                eventId: leg.eventId,
+                category: cat,
+                name: leg.marketName,
+                shortName: leg.marketName.replace(/_/g, ' '),
+                line: leg.line ?? undefined,
+                probability: leg.confidence ?? 0.5,
+                confidence: leg.confidence ?? 0.5,
+                isActive: true,
+                streakId: leg.streakId ?? undefined,
+                streakSummary: leg.streakSummary ?? undefined,
+              },
+            });
+            marketId = created.id;
+          }
+        }
+
+        if (marketId) {
+          await this.addSelection(userId, marketId);
+        }
       } catch {
         // Skip invalid/conflicting legs
       }

@@ -74,11 +74,21 @@ export class BuilderController {
   /**
    * POST /api/v1/builder/apply-suggestion
    * Apply a suggested ticket — clears builder and adds the ticket's legs.
-   * Body: { legs: [{ marketId: string }] }
+   * Accepts marketId (existing market) or eventId+marketName+line (auto-creates from streak).
    */
   @Post('apply-suggestion')
   async applySuggestion(
-    @Body() body: { legs: Array<{ marketId: string }> },
+    @Body() body: {
+      legs: Array<{
+        marketId?: string;
+        eventId?: string;
+        marketName?: string;
+        line?: number | null;
+        confidence?: number;
+        streakId?: string;
+        streakSummary?: string;
+      }>;
+    },
     @Request() req: any,
   ) {
     const userId = this.getUserId(req);
