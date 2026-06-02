@@ -1,7 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { Queue } from 'bull';
-import { InjectQueue } from '@nestjs/bull';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { IDataProvider } from './interfaces/data-provider.interface';
 
@@ -15,74 +13,41 @@ export class IngestService {
     @Inject('ODDS_API_ADAPTER')
     private oddsApiAdapter: any,
     private prisma: PrismaService,
-    @InjectQueue('ingest') private ingestQueue: Queue,
   ) {}
 
   /**
-   * Daily ingest of fixtures (7-day window at 4 AM)
+   * Daily ingest of fixtures (7-day window at 4 AM).
+   * Runs directly — no Bull queue dependency.
    */
   @Cron('0 4 * * *')
   async ingestDailyFixtures(): Promise<void> {
     this.logger.log('Starting daily fixture ingestion');
-    try {
-      await this.ingestQueue.add(
-        'daily-fixtures',
-        {},
-        {
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
-          },
-        },
-      );
-    } catch (error) {
-      this.logger.error('Failed to queue daily fixtures job', error);
-    }
+    const startDate = new Date();
+    this.ingestFixtures(startDate, 7)
+      .then(() => this.logger.log('Daily fixture ingestion completed'))
+      .catch((err) => this.logger.error('Daily fixture ingestion failed', err));
   }
 
   /**
-   * Refresh odds every 5 minutes for active events
+   * Refresh odds every 7 minutes for active events.
+   * Runs directly — no Bull queue dependency.
    */
-  @Cron('*/5 * * * *')
+  @Cron('*/7 * * * *')
   async refreshOdds(): Promise<void> {
-    try {
-      await this.ingestQueue.add(
-        'odds-refresh',
-        {},
-        {
-          attempts: 2,
-          backoff: {
-            type: 'exponential',
-            delay: 1000,
-          },
-        },
-      );
-    } catch (error) {
-      this.logger.error('Failed to queue odds refresh job', error);
-    }
+    this.refreshOddsForActiveEvents()
+      .then(() => this.logger.log('Odds refresh completed'))
+      .catch((err) => this.logger.error('Odds refresh failed', err));
   }
 
   /**
-   * Poll lineups every 10 minutes for events kicking off within 90 minutes
+   * Poll lineups every 15 minutes for events kicking off soon.
+   * Runs directly — no Bull queue dependency.
    */
-  @Cron('*/10 * * * *')
+  @Cron('*/15 * * * *')
   async pollLineups(): Promise<void> {
-    try {
-      await this.ingestQueue.add(
-        'lineup-check',
-        {},
-        {
-          attempts: 2,
-          backoff: {
-            type: 'exponential',
-            delay: 1000,
-          },
-        },
-      );
-    } catch (error) {
-      this.logger.error('Failed to queue lineup check job', error);
-    }
+    this.checkLineupsForUpcomingEvents()
+      .then(() => this.logger.log('Lineup check completed'))
+      .catch((err) => this.logger.error('Lineup check failed', err));
   }
 
   /**
@@ -389,18 +354,9 @@ export class IngestService {
   @Cron('0 5 * * *')
   async ingestDailyPlayerData(): Promise<void> {
     this.logger.log('Starting daily player data ingestion');
-    try {
-      await this.ingestQueue.add(
-        'player-data-ingest',
-        {},
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 3000 },
-        },
-      );
-    } catch (error) {
-      this.logger.error('Failed to queue player data ingest job', error);
-    }
+    this.ingestPlayerDataForRecentEvents()
+      .then(() => this.logger.log('Daily player data ingestion completed'))
+      .catch((err) => this.logger.error('Daily player data ingestion failed', err));
   }
 
   /**
@@ -726,18 +682,9 @@ export class IngestService {
   @Cron('30 5 * * *')
   async ingestDailyMatchStats(): Promise<void> {
     this.logger.log('Starting daily match stats ingestion');
-    try {
-      await this.ingestQueue.add(
-        'match-stats-ingest',
-        {},
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 3000 },
-        },
-      );
-    } catch (error) {
-      this.logger.error('Failed to queue match stats ingest job', error);
-    }
+    this.ingestMatchStatsForFinishedEvents()
+      .then((r) => this.logger.log(`Daily match stats ingestion completed: ${r.succeeded}/${r.processed}`))
+      .catch((err) => this.logger.error('Daily match stats ingestion failed', err));
   }
 
   /**
