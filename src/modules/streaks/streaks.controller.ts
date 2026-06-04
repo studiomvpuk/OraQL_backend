@@ -143,7 +143,15 @@ export class StreaksController {
    * No bookmaker dependency — probabilities derived from historical patterns.
    */
   @Post('generate-markets')
-  @HttpCode(200)
+  @HttpCode(202)
+  async triggerGenerateMarkets() {
+    this.logger.log('Market generation triggered (fire-and-forget)');
+    this.generateMarketsFromStreaks()
+      .then((r) => this.logger.log(`Market generation DONE: ${r.marketsCreated} markets across ${r.eventsProcessed} events`))
+      .catch((err) => this.logger.error('Market generation FAILED', err));
+    return { status: 'started', message: 'Market generation running in background.' };
+  }
+
   async generateMarketsFromStreaks() {
     this.logger.log('Generating markets from streak data for upcoming events');
 
