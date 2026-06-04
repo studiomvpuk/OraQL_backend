@@ -123,6 +123,187 @@ const MARKET_DEFINITIONS: MarketDefinition[] = [
     },
   },
 
+  // --- Match Result ---
+  {
+    marketName: 'MATCH_RESULT_HOME',
+    line: undefined,
+    evaluate: (s: MatchStatsRow, isHome: boolean) => {
+      const teamGoals = isHome ? (s.homeScore ?? 0) : (s.awayScore ?? 0);
+      const oppGoals = isHome ? (s.awayScore ?? 0) : (s.homeScore ?? 0);
+      return teamGoals > oppGoals;
+    },
+  },
+  {
+    marketName: 'MATCH_RESULT_DRAW',
+    line: undefined,
+    evaluate: (s: MatchStatsRow) => {
+      return (s.homeScore ?? 0) === (s.awayScore ?? 0);
+    },
+  },
+  {
+    marketName: 'MATCH_RESULT_AWAY',
+    line: undefined,
+    evaluate: (s: MatchStatsRow, isHome: boolean) => {
+      const teamGoals = isHome ? (s.homeScore ?? 0) : (s.awayScore ?? 0);
+      const oppGoals = isHome ? (s.awayScore ?? 0) : (s.homeScore ?? 0);
+      return teamGoals < oppGoals;
+    },
+  },
+
+  // --- Double Chance ---
+  {
+    marketName: 'DOUBLE_CHANCE_WIN_OR_DRAW',
+    line: undefined,
+    evaluate: (s: MatchStatsRow, isHome: boolean) => {
+      const teamGoals = isHome ? (s.homeScore ?? 0) : (s.awayScore ?? 0);
+      const oppGoals = isHome ? (s.awayScore ?? 0) : (s.homeScore ?? 0);
+      return teamGoals >= oppGoals; // win or draw
+    },
+  },
+  {
+    marketName: 'DOUBLE_CHANCE_NO_DRAW',
+    line: undefined,
+    evaluate: (s: MatchStatsRow) => {
+      return (s.homeScore ?? 0) !== (s.awayScore ?? 0);
+    },
+  },
+
+  // --- Win to Nil (team wins AND opponent scores 0) ---
+  {
+    marketName: 'WIN_TO_NIL',
+    line: undefined,
+    evaluate: (s: MatchStatsRow, isHome: boolean) => {
+      const teamGoals = isHome ? (s.homeScore ?? 0) : (s.awayScore ?? 0);
+      const oppGoals = isHome ? (s.awayScore ?? 0) : (s.homeScore ?? 0);
+      return teamGoals > 0 && oppGoals === 0;
+    },
+  },
+
+  // --- Team to Score (did this team score at least 1?) ---
+  {
+    marketName: 'TEAM_TO_SCORE_YES',
+    line: undefined,
+    evaluate: (s: MatchStatsRow, isHome: boolean) => {
+      const teamGoals = isHome ? (s.homeScore ?? 0) : (s.awayScore ?? 0);
+      return teamGoals > 0;
+    },
+  },
+  {
+    marketName: 'TEAM_TO_SCORE_NO',
+    line: undefined,
+    evaluate: (s: MatchStatsRow, isHome: boolean) => {
+      const teamGoals = isHome ? (s.homeScore ?? 0) : (s.awayScore ?? 0);
+      return teamGoals === 0;
+    },
+  },
+
+  // --- Odd/Even Total Goals ---
+  {
+    marketName: 'TOTAL_GOALS_ODD',
+    line: undefined,
+    evaluate: (s: MatchStatsRow) => {
+      const total = (s.homeScore ?? 0) + (s.awayScore ?? 0);
+      return total % 2 === 1;
+    },
+  },
+  {
+    marketName: 'TOTAL_GOALS_EVEN',
+    line: undefined,
+    evaluate: (s: MatchStatsRow) => {
+      const total = (s.homeScore ?? 0) + (s.awayScore ?? 0);
+      return total % 2 === 0;
+    },
+  },
+
+  // --- Exact Total Goals (0, 1, 2, 3, 4+) ---
+  ...[0, 1, 2, 3].map((n) => ({
+    marketName: 'EXACT_GOALS',
+    line: n,
+    evaluate: (s: MatchStatsRow) => {
+      const total = (s.homeScore ?? 0) + (s.awayScore ?? 0);
+      return total === n;
+    },
+  })),
+  {
+    marketName: 'EXACT_GOALS',
+    line: 4,
+    evaluate: (s: MatchStatsRow) => {
+      const total = (s.homeScore ?? 0) + (s.awayScore ?? 0);
+      return total >= 4;
+    },
+  },
+
+  // --- Goal in Both Halves (needs first half data — approximated) ---
+  // We don't have HT data yet, but these are placeholders for when we add it
+
+  // --- Shots Over/Under (from MatchStats) ---
+  ...[8.5, 10.5, 12.5, 15.5].flatMap((line) => [
+    {
+      marketName: 'SHOTS_OVER',
+      line,
+      evaluate: (s: MatchStatsRow) => {
+        return (s.shotsTotal ?? 0) > line;
+      },
+    },
+    {
+      marketName: 'SHOTS_UNDER',
+      line,
+      evaluate: (s: MatchStatsRow) => {
+        return (s.shotsTotal ?? 0) < line;
+      },
+    },
+  ]),
+
+  // --- Shots on Target Over/Under ---
+  ...[2.5, 3.5, 4.5, 5.5].flatMap((line) => [
+    {
+      marketName: 'SHOTS_ON_TARGET_OVER',
+      line,
+      evaluate: (s: MatchStatsRow) => {
+        return (s.shotsOnTarget ?? 0) > line;
+      },
+    },
+    {
+      marketName: 'SHOTS_ON_TARGET_UNDER',
+      line,
+      evaluate: (s: MatchStatsRow) => {
+        return (s.shotsOnTarget ?? 0) < line;
+      },
+    },
+  ]),
+
+  // --- Fouls Over/Under (from MatchStats — total match fouls via scanTotalStatMarkets) ---
+  ...[18.5, 20.5, 22.5, 25.5].flatMap((line) => [
+    {
+      marketName: 'FOULS_OVER',
+      line,
+      evaluate: () => false, // overridden at scan time
+    },
+    {
+      marketName: 'FOULS_UNDER',
+      line,
+      evaluate: () => false, // overridden at scan time
+    },
+  ]),
+
+  // --- Offsides Over/Under ---
+  ...[1.5, 2.5, 3.5].flatMap((line) => [
+    {
+      marketName: 'OFFSIDES_OVER',
+      line,
+      evaluate: (s: MatchStatsRow) => {
+        return (s.offsides ?? 0) > line;
+      },
+    },
+    {
+      marketName: 'OFFSIDES_UNDER',
+      line,
+      evaluate: (s: MatchStatsRow) => {
+        return (s.offsides ?? 0) < line;
+      },
+    },
+  ]),
+
   // --- Corners Over/Under ---
   ...[7.5, 8.5, 9.5, 10.5, 11.5].flatMap((line) => [
     {
@@ -212,7 +393,8 @@ export class StreakDetectionService {
         for (const mDef of MARKET_DEFINITIONS) {
           if (
             mDef.marketName.startsWith('CORNERS_') ||
-            mDef.marketName.startsWith('CARDS_')
+            mDef.marketName.startsWith('CARDS_') ||
+            mDef.marketName.startsWith('FOULS_')
           ) {
             // Handle total-match stat markets separately
             continue;
@@ -270,6 +452,18 @@ export class StreakDetectionService {
           'cards',
           'CARDS',
           [2.5, 3.5, 4.5, 5.5],
+        );
+
+        // Fouls: need both teams' stats per match
+        await this.scanTotalStatMarkets(
+          teamId,
+          venueFilter,
+          window,
+          windowSize,
+          streaks,
+          'fouls',
+          'FOULS',
+          [18.5, 20.5, 22.5, 25.5],
         );
       }
     }
@@ -418,7 +612,7 @@ export class StreakDetectionService {
     window: MatchStatsRow[],
     windowSize: number,
     streaks: DetectedStreak[],
-    statField: 'corners' | 'cards',
+    statField: 'corners' | 'cards' | 'fouls',
     marketPrefix: string,
     lines: number[],
   ): Promise<void> {
@@ -436,7 +630,9 @@ export class StreakDetectionService {
       const value =
         statField === 'corners'
           ? stat.corners
-          : stat.yellowCards + stat.redCards;
+          : statField === 'fouls'
+            ? (stat.fouls ?? 0)
+            : stat.yellowCards + stat.redCards;
 
       const current = totalByEvent.get(stat.eventId) || 0;
       totalByEvent.set(stat.eventId, current + value);
